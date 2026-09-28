@@ -194,7 +194,7 @@ classDiagram
 
 | Champ | Valeur |
 | --- | --- |
-| **Description** | L'Hôte peut assigner individuellement le rôle de chaque joueur (Chasseur ↔ Proie) via un bouton de basculement. Il peut également déclencher une attribution aléatoire : le serveur mélange les joueurs et assigne ~⅓ d'entre eux comme Proies (minimum 1, maximum N−1). L'attribution est animée côté client (les badges de rôle s'inversent visuellement) pour que tous les joueurs voient le changement simultanément. |
+| **Description** | L'Hôte peut assigner individuellement le rôle de chaque joueur, y compris le sien (Chasseur ↔ Proie) via un bouton de basculement. Il peut également déclencher une attribution aléatoire : le serveur mélange les joueurs et assigne ~⅓ d'entre eux comme Proies (minimum 1, maximum N−1). L'attribution est animée côté client (les badges de rôle s'inversent visuellement) pour que tous les joueurs voient le changement simultanément. |
 | **Acteurs** | Hôte |
 | **Priorité** | MUST |
 | **Règles** | RG-04, RG-16 |
@@ -244,17 +244,6 @@ classDiagram
 | **Règles** | RG-20 |
 | **Critère d'acceptance** | L'Hôte peut créer au moins 3 objectifs personnalisés. Les joueurs voient leur progression en temps réel. |
 | **Dépendances** | EF-04 (configuration partie) |
-
-#### EF-22 — Validation manuelle d'événements par les Proies
-
-| Champ | Valeur |
-| --- | --- |
-| **Description** | Les Proies peuvent signaler manuellement des événements de jeu : validation d'un passage à un point de contrôle, signalement volontaire de position, ou confirmation d'un objectif. Ces événements sont horodatés et enregistrés dans l'historique de la partie. |
-| **Acteurs** | Proie |
-| **Priorité** | COULD |
-| **Règles** | RG-21 |
-| **Critère d'acceptance** | Une Proie peut valider un événement en ≤ 2 actions. L'événement est visible dans le récapitulatif de fin de partie. |
-| **Dépendances** | EF-21 (objectifs, si activé) |
 
 ## 5. Exigences non fonctionnelles
 
@@ -389,13 +378,27 @@ function broadcastAll(partie: Partie, message: object) {
 # /etc/nginx/sites-available/manhunt
 server {
     listen 443 ssl;
-    server_name manhunt.example.com;
+    server_name manhunt.anathos.me;
+
+    ssl_certificate /etc/letsencrypt/live/manhunt.anathos.me/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/manhunt.anathos.me/privkey.pem;
+
+    root ~/eanathos/manhunt-irl/apps/frontend/build;
+    index index.html;
 
     location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
+        try_files $uri $uri/ /index.html;
+    }
 
-        # Upgrade nécessaire pour les WebSockets
+    location /api/ {
+        proxy_pass http://localhost:3003;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+    }
+
+    location /ws {
+        proxy_pass http://localhost:3003;
+        proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
@@ -403,7 +406,7 @@ server {
 }
 ```
 
-Le frontend SvelteKit est servi en statique (dossier `build/`) directement par Nginx, ou via le process Fastify selon la configuration choisie. Le process Node.js est maintenu en vie par PM2.
+Le frontend SvelteKit est servi en statique (dossier `build/`) par Nginx. Les requêtes API et WebSocket sont routées vers le backend Fastify sur le port 3003. Le process Node.js est maintenu en vie par PM2. Le certificat SSL est géré par Let's Encrypt (certbot).
 
 ### 6.6. Git workflow
 
@@ -425,13 +428,13 @@ Le projet suit un workflow **GitHub Flow** simplifié, adapté à un projet solo
 - `dev` est mergée dans `main` uniquement quand elle est stable et testée.
 - Les messages de commit suivent [Conventional Commits](https://www.conventionalcommits.org/) : `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
 
-**GitHub Actions**
+**GitHub Actions — CI**
 
 ```yaml
 # .github/workflows/ci.yml
 on:
   push:
-    branches: [dev]
+    branches: [dev, main]
   pull_request:
     branches: [dev, main]
 
@@ -449,46 +452,20 @@ jobs:
       - run: npm run test
 ```
 
-**Déploiement**
+**GitHub Actions — CD**
 
-Le déploiement en production est déclenché manuellement (ou via un tag `v*`) depuis `main` — pas de CD automatique sur push pour garder le contrôle.
+Le déploiement en production est automatique : après un merge sur `main`, le workflow CD se déclenche via `workflow_run` (après succès du CI). Il se connecte au VPS via SSH et exécute `git pull`, `npm ci`, `npm run build`, puis `pm2 reload manhunt`.
 
-## 7. Contenu du règlement (rules.json)
-
-Cette section définit le contenu initial du fichier `rules.json` intégré à l'application (cf. EF-17, RG-15). Il est amené à évoluer indépendamment du code.
-
-```json
-[
-  {
-    "title": "Locomotion",
-    "content": "Les Chasseurs sont libres d'utiliser tout moyen de locomotion à leur disposition (à pied, vélo, trottinette, voiture, etc.). Les Proies se déplacent uniquement à pied."
-  },
-  {
-    "title": "Distance au sol",
-    "content": "Les Proies doivent rester à moins de 5 mètres du sol à tout moment. Les Chasseurs ne sont soumis à aucune restriction de hauteur."
-  },
-  {
-    "title": "Zone de jeu",
-    "content": "Les joueurs doivent rester dans la zone définie avant le début de la partie. Toute Proie sortant de la zone est automatiquement éliminée."
-  },
-  {
-    "title": "Visibilité en milieu non éclairé",
-    "content": "Dans un environnement sans éclairage ambiant (nuit, zone sombre), les Proies sont tenues de porter une source de lumière visible (lampe frontale, lampe de poche ou équivalent)."
-  },
-  {
-    "title": "Élimination",
-    "content": "Un Chasseur élimine une Proie en la touchant physiquement. Il doit ensuite déclarer l'élimination dans l'application. La Proie dispose d'un délai pour confirmer ou contester."
-  },
-  {
-    "title": "Fin de partie",
-    "content": "La partie prend fin lorsque toutes les Proies sont éliminées, ou lorsque le chronomètre atteint zéro. Dans ce dernier cas, les Proies encore en jeu sont déclarées victorieuses."
-  }
-]
+```yaml
+# .github/workflows/cd.yml
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [main]
+    types: [completed]
 ```
 
-> **Note :** Ce fichier est à placer à la racine du serveur web. Toute modification est effective au prochain chargement de la section Règles, sans redéploiement applicatif.
-
-## 8. Identité visuelle
+## 7. Identité visuelle
 
 ### 8.1. Icône de l'application
 
