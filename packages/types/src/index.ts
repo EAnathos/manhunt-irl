@@ -54,16 +54,6 @@ export interface Objective {
   completedBy: string[];
 }
 
-export interface GameEvent {
-  id: string;
-  sessionId: string;
-  pseudo: string;
-  description: string;
-  latitude?: number;
-  longitude?: number;
-  timestamp: number;
-}
-
 export interface Game {
   code: string;
   status: GameStatus;
@@ -76,7 +66,6 @@ export interface Game {
   zone?: Zone;
   eliminations: Elimination[];
   objectives: Objective[];
-  events: GameEvent[];
   positionHistory: Record<string, Position[]>;
   chatMessages: ChatMessage[];
   initialPreyCount?: number;
@@ -116,7 +105,6 @@ export interface GameSnapshot {
   zone?: Zone;
   eliminations: Elimination[];
   objectives: Objective[];
-  events: GameEvent[];
 }
 
 export interface PlayerSnapshot {
@@ -147,8 +135,7 @@ export type WSClientMessage =
   | { type: 'chat_message'; channel: ChatChannel; text: string }
   | { type: 'add_objective'; title: string; assignedTo: 'proies' | 'chasseurs' | 'tous' }
   | { type: 'remove_objective'; objectiveId: string }
-  | { type: 'complete_objective'; objectiveId: string }
-  | { type: 'validate_event'; description: string };
+  | { type: 'complete_objective'; objectiveId: string };
 
 export type WSServerMessage =
   | { type: 'game_state'; game: GameSnapshot }
@@ -176,5 +163,4 @@ export type WSServerMessage =
   | { type: 'position_history'; tracks: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> }
   | { type: 'objective_added'; objective: Objective }
   | { type: 'objective_removed'; objectiveId: string }
-  | { type: 'objective_completed'; objectiveId: string; sessionId: string; pseudo: string }
-  | { type: 'event_validated'; event: GameEvent };
+  | { type: 'objective_completed'; objectiveId: string; sessionId: string; pseudo: string };

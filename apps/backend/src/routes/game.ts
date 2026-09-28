@@ -45,7 +45,6 @@ export async function gameRoutes(app: FastifyInstance) {
       preyPingInterval: 120,
       eliminations: [],
       objectives: [],
-      events: [],
       positionHistory: {},
       chatMessages: [],
     };

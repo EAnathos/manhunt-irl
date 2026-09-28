@@ -26,7 +26,6 @@
   let objectiveTitle = $state('');
   let objectiveTarget = $state<'proies' | 'chasseurs' | 'tous'>('tous');
 
-  let eventDesc = $state('');
   let graceTimer = $state('');
 
   let isHost = $derived(sessionStore.data?.sessionId === gameStore.game?.hostSessionId);
@@ -190,12 +189,6 @@
 
   function completeObjective(id: string) {
     sendWs({ type: 'complete_objective', objectiveId: id });
-  }
-
-  function validateEvent() {
-    if (!eventDesc.trim()) return;
-    sendWs({ type: 'validate_event', description: eventDesc.trim() });
-    eventDesc = '';
   }
 
   function exportPositionHistory() {
@@ -528,15 +521,6 @@
       <div class="card" style="text-align: center;">
         <p style="font-size: 1.2rem; margin-bottom: 0.5rem;">🏃 Reste en mouvement !</p>
         <p style="color: var(--text-muted); font-size: 0.85rem;">Ta position est envoyée toutes les {formatDuration(game.preyPingInterval)}</p>
-        {#if myPlayer?.status === 'LIBRE'}
-          <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
-            <input type="text" placeholder="Signaler un événement..." bind:value={eventDesc}
-              onkeydown={(e) => { if (e.key === 'Enter') validateEvent(); }}
-              style="flex: 1; padding: 0.5rem; font-size: 0.85rem;" />
-            <button class="btn-primary" onclick={validateEvent} disabled={!eventDesc.trim()}
-              style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">Valider</button>
-          </div>
-        {/if}
       </div>
     {/if}
 
@@ -664,19 +648,6 @@
             <div style="padding: 0.25rem 0; font-size: 0.9rem; color: var(--text-muted);">
               <span style="color: var(--hunter);">{hunter?.pseudo ?? '?'}</span>
               → <span style="color: var(--prey);">{prey?.pseudo ?? '?'}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      {#if game.events.length > 0}
-        <div class="card">
-          <h2>Événements</h2>
-          {#each game.events as evt}
-            <div style="padding: 0.25rem 0; font-size: 0.85rem;">
-              <span style="color: var(--text-muted);">{formatTime(evt.timestamp)}</span>
-              <span style="color: var(--prey); font-weight: 600;">{evt.pseudo}</span>
-              <span>{evt.description}</span>
             </div>
           {/each}
         </div>

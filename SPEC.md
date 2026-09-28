@@ -122,7 +122,6 @@ classDiagram
 | RG-18 | Historique des positions exportable | Les positions GPS de tous les joueurs sont conservées en mémoire pendant la durée de la partie. À la fin de la partie, l'historique complet est inclus dans le récapitulatif et peut être exporté par les joueurs (format JSON ou GPX). |
 | RG-19 | Chat en jeu | Les joueurs disposent d'espaces de conversation textuels séparés par canal : Proies uniquement, Chasseurs uniquement, et Tous. Un joueur ne voit que les canaux correspondant à son rôle (une Proie ne voit pas le canal Chasseurs et inversement). |
 | RG-20 | Objectifs de partie (mode grande partie) | L'Hôte peut activer un mode « objectifs » proposant une liste de missions secondaires aux Proies et/ou aux Chasseurs. La victoire peut être conditionnée à la complétion d'objectifs en plus de la survie / capture. |
-| RG-21 | Validation manuelle par les Proies | En complément de la confirmation d'élimination (RG-09), les Proies peuvent signaler volontairement leur position ou valider manuellement un événement de jeu (ex. passage dans un point de contrôle). |
 | RG-22 | Affichage du délai de grâce | Pendant le délai de grâce, un compte à rebours est affiché à tous les joueurs. Les Chasseurs voient le temps restant avant de pouvoir partir à la chasse. Les Proies voient le temps restant pour se cacher. |
 | RG-23 | Carte interactive | Les positions des joueurs sont affichées sur une carte interactive (Leaflet + OpenStreetMap). Les Chasseurs sont représentés par des marqueurs rouges, les Proies par des marqueurs bleus. La zone de jeu, si définie, est affichée en surimpression. Chaque joueur voit sa propre position. Les Proies ne voient que leur propre marqueur. |
 
@@ -153,7 +152,6 @@ classDiagram
 | EF-19 | Exporter l'historique des positions en fin de partie | SHOULD | RG-18 |
 | EF-20 | Chat en jeu (canaux Proies / Chasseurs / Tous) | SHOULD | RG-19 |
 | EF-21 | Mode objectifs pour les grandes parties | COULD | RG-20 |
-| EF-22 | Validation manuelle d'événements par les Proies | COULD | RG-21 |
 | EF-23 | Afficher le compte à rebours du délai de grâce | MUST | RG-22 |
 
 ### 4.2. Fiche d'exigence détaillée

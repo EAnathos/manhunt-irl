@@ -1,6 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import type { FastifyInstance } from 'fastify';
-import type { WSClientMessage, Role, Zone, Objective, GameEvent } from '@manhunt/types';
+import type { WSClientMessage, Role, Zone, Objective } from '@manhunt/types';
 import { games } from '../store.js';
 import { setWs, removeWs } from '../broadcast.js';
 import { broadcastToAll, sendToPlayer } from '../broadcast.js';
@@ -274,22 +274,5 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
       break;
     }
 
-    case 'validate_event': {
-      if (game.status !== 'EN_COURS') return;
-      if (player.role !== 'PROIE') return;
-      if (!msg.description || msg.description.trim().length === 0) return;
-      const event: GameEvent = {
-        id: uuid(),
-        sessionId,
-        pseudo: player.pseudo,
-        description: msg.description.trim(),
-        latitude: player.position?.latitude,
-        longitude: player.position?.longitude,
-        timestamp: Date.now(),
-      };
-      game.events.push(event);
-      broadcastToAll(game, { type: 'event_validated', event });
-      break;
-    }
   }
 }

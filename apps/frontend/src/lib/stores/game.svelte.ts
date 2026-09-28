@@ -1,4 +1,4 @@
-import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role, GameEvent } from '@manhunt/types';
+import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role } from '@manhunt/types';
 import { onWsMessage } from '../api/ws';
 
 export const gameStore = $state<{
@@ -166,11 +166,6 @@ export function initGameListeners() {
         }
         break;
 
-      case 'event_validated':
-        if (gameStore.game) {
-          gameStore.game.events = [...gameStore.game.events, msg.event];
-        }
-        break;
     }
   });
 }
