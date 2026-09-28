@@ -21,5 +21,7 @@ export function gameSnapshot(game: Game): GameSnapshot {
     preyPingInterval: game.preyPingInterval,
     zone: game.zone,
     eliminations: game.eliminations,
+    objectives: game.objectives,
+    events: game.events,
   };
 }

@@ -5,7 +5,7 @@
   import { sessionStore, logout } from '$lib/stores/session.svelte';
   import { connectWs, sendWs, disconnectWs } from '$lib/api/ws';
   import { gameStore, initGameListeners } from '$lib/stores/game.svelte';
-  import type { Role, PlayerSnapshot } from '@manhunt/types';
+  import type { Role, PlayerSnapshot, ChatChannel } from '@manhunt/types';
 
   let geoWatchId: number | null = null;
   let unsub: (() => void) | null = null;
@@ -14,8 +14,27 @@
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let shuffling = $state(false);
 
+  let myPosition = $state<{ latitude: number; longitude: number } | null>(null);
+  let zoneRadius = $state(500);
+
+  let chatOpen = $state(false);
+  let chatInput = $state('');
+  let activeChannel = $state<ChatChannel>('tous');
+  let chatEndRef: HTMLDivElement | undefined = $state();
+
+  let objectiveTitle = $state('');
+  let objectiveTarget = $state<'proies' | 'chasseurs' | 'tous'>('tous');
+
+  let eventDesc = $state('');
+
   let isHost = $derived(sessionStore.data?.sessionId === gameStore.game?.hostSessionId);
   let myPlayer = $derived(gameStore.game?.players.find((p: PlayerSnapshot) => p.sessionId === sessionStore.data?.sessionId));
+  let visibleChannels = $derived<ChatChannel[]>(
+    myPlayer?.role === 'CHASSEUR' ? ['chasseurs', 'tous'] : myPlayer?.role === 'PROIE' ? ['proies', 'tous'] : ['tous']
+  );
+  let filteredMessages = $derived(
+    gameStore.chatMessages.filter((m) => m.channel === activeChannel)
+  );
 
   onMount(() => {
     if (!sessionStore.data) {
@@ -28,6 +47,7 @@
     if ('geolocation' in navigator) {
       geoWatchId = navigator.geolocation.watchPosition(
         (pos) => {
+          myPosition = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
           sendWs({
             type: 'position',
             latitude: pos.coords.latitude,
@@ -106,6 +126,85 @@
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60);
     return m > 0 ? `${m} min` : `${seconds} s`;
+  }
+
+  function setZoneFromPosition() {
+    if (!myPosition) return;
+    sendWs({
+      type: 'update_config',
+      zone: {
+        type: 'cercle',
+        centre: { latitude: myPosition.latitude, longitude: myPosition.longitude },
+        rayon: zoneRadius,
+      },
+    });
+  }
+
+  function updateZoneRadius(r: number) {
+    zoneRadius = r;
+    if (gameStore.game?.zone?.centre) {
+      sendWs({
+        type: 'update_config',
+        zone: {
+          type: 'cercle',
+          centre: gameStore.game.zone.centre,
+          rayon: r,
+        },
+      });
+    }
+  }
+
+  function clearZone() {
+    sendWs({ type: 'update_config', zone: undefined });
+  }
+
+  function sendChat() {
+    const text = chatInput.trim();
+    if (!text) return;
+    sendWs({ type: 'chat_message', channel: activeChannel, text });
+    chatInput = '';
+    setTimeout(() => chatEndRef?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }
+
+  function addObjective() {
+    if (!objectiveTitle.trim()) return;
+    sendWs({ type: 'add_objective', title: objectiveTitle.trim(), assignedTo: objectiveTarget });
+    objectiveTitle = '';
+  }
+
+  function removeObjective(id: string) {
+    sendWs({ type: 'remove_objective', objectiveId: id });
+  }
+
+  function completeObjective(id: string) {
+    sendWs({ type: 'complete_objective', objectiveId: id });
+  }
+
+  function validateEvent() {
+    if (!eventDesc.trim()) return;
+    sendWs({ type: 'validate_event', description: eventDesc.trim() });
+    eventDesc = '';
+  }
+
+  function exportPositionHistory() {
+    if (!gameStore.positionHistory || !gameStore.game) return;
+    const data = {
+      gameCode: gameStore.game.code,
+      startedAt: gameStore.game.startedAt,
+      endedAt: Date.now(),
+      tracks: gameStore.positionHistory,
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `manhunt-${gameStore.game.code}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function formatTime(ts: number): string {
+    return new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   }
 </script>
 
@@ -200,6 +299,86 @@
               <option value="1200">20 min</option>
             </select>
           </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Zone de jeu</h2>
+        {#if game.zone?.centre}
+          <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+            Centre : {game.zone.centre.latitude.toFixed(5)}, {game.zone.centre.longitude.toFixed(5)}
+            — Rayon : {game.zone.rayon ?? 0} m
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label>
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Rayon</span>
+              <select value={String(game.zone.rayon ?? 500)} onchange={(e) => updateZoneRadius(Number((e.target as HTMLSelectElement).value))}>
+                <option value="100">100 m</option>
+                <option value="250">250 m</option>
+                <option value="500">500 m</option>
+                <option value="1000">1 km</option>
+                <option value="2000">2 km</option>
+                <option value="5000">5 km</option>
+              </select>
+            </label>
+            <button class="btn-secondary" onclick={clearZone} style="font-size: 0.85rem;">
+              Supprimer la zone
+            </button>
+          </div>
+        {:else}
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+            Aucune zone définie. Les joueurs peuvent aller où ils veulent.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 0.5rem;">
+            <label>
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Rayon</span>
+              <select bind:value={zoneRadius}>
+                <option value={100}>100 m</option>
+                <option value={250}>250 m</option>
+                <option value={500}>500 m</option>
+                <option value={1000}>1 km</option>
+                <option value={2000}>2 km</option>
+                <option value={5000}>5 km</option>
+              </select>
+            </label>
+            <button class="btn-primary" onclick={setZoneFromPosition} disabled={!myPosition} style="font-size: 0.85rem;">
+              {myPosition ? 'Utiliser ma position comme centre' : 'GPS en cours...'}
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      <div class="card">
+        <h2>Objectifs (optionnel)</h2>
+        {#if game.objectives.length > 0}
+          <div style="display: flex; flex-direction: column; gap: 0.4rem; margin-bottom: 0.75rem;">
+            {#each game.objectives as obj}
+              <div class="flex-between" style="padding: 0.4rem; border-radius: var(--radius); background: var(--bg); font-size: 0.85rem;">
+                <div>
+                  <span>{obj.title}</span>
+                  <span class="badge" style="margin-left: 0.4rem; font-size: 0.65rem;">
+                    {obj.assignedTo === 'tous' ? 'Tous' : obj.assignedTo === 'proies' ? 'Proies' : 'Chasseurs'}
+                  </span>
+                </div>
+                <button class="btn-secondary" style="padding: 0.15rem 0.4rem; font-size: 0.75rem; color: var(--accent);"
+                  onclick={() => removeObjective(obj.id)}>✕</button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div style="display: flex; gap: 0.5rem; align-items: end;">
+          <div style="flex: 1;">
+            <input type="text" placeholder="Nouvel objectif..." bind:value={objectiveTitle}
+              onkeydown={(e) => { if (e.key === 'Enter') addObjective(); }}
+              style="padding: 0.5rem; font-size: 0.85rem;" />
+          </div>
+          <select bind:value={objectiveTarget} style="width: auto; padding: 0.5rem; font-size: 0.85rem;">
+            <option value="tous">Tous</option>
+            <option value="proies">Proies</option>
+            <option value="chasseurs">Chasseurs</option>
+          </select>
+          <button class="btn-primary" onclick={addObjective} style="padding: 0.5rem 0.75rem; font-size: 0.85rem;"
+            disabled={!objectiveTitle.trim()}>+</button>
         </div>
       </div>
 
@@ -324,6 +503,35 @@
       <div class="card" style="text-align: center;">
         <p style="font-size: 1.2rem; margin-bottom: 0.5rem;">🏃 Reste en mouvement !</p>
         <p style="color: var(--text-muted); font-size: 0.85rem;">Ta position est envoyée toutes les {formatDuration(game.preyPingInterval)}</p>
+        {#if myPlayer?.status === 'LIBRE'}
+          <div style="margin-top: 0.75rem; display: flex; gap: 0.5rem;">
+            <input type="text" placeholder="Signaler un événement..." bind:value={eventDesc}
+              onkeydown={(e) => { if (e.key === 'Enter') validateEvent(); }}
+              style="flex: 1; padding: 0.5rem; font-size: 0.85rem;" />
+            <button class="btn-primary" onclick={validateEvent} disabled={!eventDesc.trim()}
+              style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">Valider</button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if game.objectives.length > 0}
+      <div class="card">
+        <h2>Objectifs</h2>
+        {#each game.objectives.filter((o) => o.assignedTo === 'tous' || (o.assignedTo === 'proies' && myPlayer?.role === 'PROIE') || (o.assignedTo === 'chasseurs' && myPlayer?.role === 'CHASSEUR')) as obj}
+          {@const done = obj.completedBy.includes(sessionStore.data?.sessionId ?? '')}
+          <div class="flex-between" style="padding: 0.4rem 0; font-size: 0.9rem;">
+            <span style:opacity={done ? 0.5 : 1} style:text-decoration={done ? 'line-through' : 'none'}>
+              {obj.title}
+            </span>
+            {#if !done && myPlayer?.status === 'LIBRE'}
+              <button class="btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
+                onclick={() => completeObjective(obj.id)}>Fait</button>
+            {:else if done}
+              <span style="color: var(--success); font-size: 0.75rem;">✓</span>
+            {/if}
+          </div>
+        {/each}
       </div>
     {/if}
 
@@ -346,6 +554,45 @@
           </div>
         </div>
       {/each}
+    </div>
+
+    <!-- CHAT -->
+    <div class="card">
+      <button type="button" class="flex-between" style="margin-bottom: 0.5rem; cursor: pointer; width: 100%; background: none; border: none; padding: 0; color: inherit;" onclick={() => chatOpen = !chatOpen}>
+        <h2 style="margin-bottom: 0;">Chat</h2>
+        <span style="color: var(--text-muted); font-size: 0.85rem;">{chatOpen ? '▲' : '▼'}</span>
+      </button>
+      {#if chatOpen}
+        <div style="display: flex; gap: 0.4rem; margin-bottom: 0.5rem;">
+          {#each visibleChannels as ch}
+            <button class:btn-primary={activeChannel === ch} class:btn-secondary={activeChannel !== ch}
+              style="padding: 0.3rem 0.6rem; font-size: 0.75rem; flex: 1;"
+              onclick={() => activeChannel = ch}>
+              {ch === 'tous' ? 'Tous' : ch === 'proies' ? 'Proies' : 'Chasseurs'}
+            </button>
+          {/each}
+        </div>
+        <div style="max-height: 200px; overflow-y: auto; margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;">
+          {#each filteredMessages as msg}
+            <div style="font-size: 0.8rem;">
+              <span style="color: var(--text-muted);">{formatTime(msg.timestamp)}</span>
+              <span style="font-weight: 600;">{msg.pseudo}</span>
+              <span>{msg.text}</span>
+            </div>
+          {/each}
+          {#if filteredMessages.length === 0}
+            <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center;">Aucun message</p>
+          {/if}
+          <div bind:this={chatEndRef}></div>
+        </div>
+        <div style="display: flex; gap: 0.4rem;">
+          <input type="text" placeholder="Message..." bind:value={chatInput}
+            onkeydown={(e) => { if (e.key === 'Enter') sendChat(); }}
+            style="flex: 1; padding: 0.5rem; font-size: 0.85rem;" />
+          <button class="btn-primary" onclick={sendChat} disabled={!chatInput.trim()}
+            style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">Envoyer</button>
+        </div>
+      {/if}
     </div>
 
   {:else if gameStore.game.status === 'TERMINEE'}
@@ -397,7 +644,40 @@
         </div>
       {/if}
 
-      <button class="btn-primary" style="margin-top: 1rem; width: 100%;" onclick={() => { logout(); goto('/'); }}>
+      {#if game.events.length > 0}
+        <div class="card">
+          <h2>Événements</h2>
+          {#each game.events as evt}
+            <div style="padding: 0.25rem 0; font-size: 0.85rem;">
+              <span style="color: var(--text-muted);">{formatTime(evt.timestamp)}</span>
+              <span style="color: var(--prey); font-weight: 600;">{evt.pseudo}</span>
+              <span>{evt.description}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if game.objectives.length > 0}
+        <div class="card">
+          <h2>Objectifs</h2>
+          {#each game.objectives as obj}
+            <div style="padding: 0.25rem 0; font-size: 0.9rem;">
+              <span>{obj.title}</span>
+              <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 0.4rem;">
+                ({obj.completedBy.length} complétion{obj.completedBy.length > 1 ? 's' : ''})
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if gameStore.positionHistory}
+        <button class="btn-secondary" style="margin-top: 0.5rem; width: 100%;" onclick={exportPositionHistory}>
+          Exporter les trajets (JSON)
+        </button>
+      {/if}
+
+      <button class="btn-primary" style="margin-top: 0.5rem; width: 100%;" onclick={() => { logout(); goto('/'); }}>
         Retour à l'accueil
       </button>
     </div>

@@ -1,5 +1,6 @@
+import { v4 as uuid } from 'uuid';
 import type { FastifyInstance } from 'fastify';
-import type { WSClientMessage, Role, Zone } from '@manhunt/types';
+import type { WSClientMessage, Role, Zone, Objective, GameEvent } from '@manhunt/types';
 import { games } from '../store.js';
 import { setWs, removeWs } from '../broadcast.js';
 import { broadcastToAll, sendToPlayer } from '../broadcast.js';
@@ -13,6 +14,8 @@ import {
   dissolveGame,
   handleDisconnect,
   handleReconnect,
+  handleChatMessage,
+  recordPosition,
 } from '../engine.js';
 
 export async function wsRoutes(app: FastifyInstance) {
@@ -81,12 +84,7 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
     case 'position': {
       if (game.status !== 'EN_COURS') return;
       if (player.status !== 'LIBRE') return;
-      player.position = {
-        latitude: msg.latitude,
-        longitude: msg.longitude,
-        timestamp: Date.now(),
-      };
-      player.lastSeen = Date.now();
+      recordPosition(game, sessionId, msg.latitude, msg.longitude);
       break;
     }
 
@@ -218,6 +216,79 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
         return;
       }
       dissolveGame(game);
+      break;
+    }
+
+    case 'chat_message': {
+      if (!handleChatMessage(game, sessionId, msg.channel, msg.text)) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Cannot send message' });
+      }
+      break;
+    }
+
+    case 'add_objective': {
+      if (sessionId !== game.hostSessionId) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Only the host can add objectives' });
+        return;
+      }
+      if (game.status !== 'LOBBY') return;
+      if (!msg.title || msg.title.trim().length === 0 || msg.title.length > 100) return;
+      const objective: Objective = {
+        id: uuid(),
+        title: msg.title.trim(),
+        assignedTo: msg.assignedTo,
+        completedBy: [],
+      };
+      game.objectives.push(objective);
+      broadcastToAll(game, { type: 'objective_added', objective });
+      break;
+    }
+
+    case 'remove_objective': {
+      if (sessionId !== game.hostSessionId) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Only the host can remove objectives' });
+        return;
+      }
+      if (game.status !== 'LOBBY') return;
+      const idx = game.objectives.findIndex((o) => o.id === msg.objectiveId);
+      if (idx === -1) return;
+      game.objectives.splice(idx, 1);
+      broadcastToAll(game, { type: 'objective_removed', objectiveId: msg.objectiveId });
+      break;
+    }
+
+    case 'complete_objective': {
+      if (game.status !== 'EN_COURS') return;
+      const obj = game.objectives.find((o) => o.id === msg.objectiveId);
+      if (!obj) return;
+      if (obj.completedBy.includes(sessionId)) return;
+      if (obj.assignedTo === 'proies' && player.role !== 'PROIE') return;
+      if (obj.assignedTo === 'chasseurs' && player.role !== 'CHASSEUR') return;
+      obj.completedBy.push(sessionId);
+      broadcastToAll(game, {
+        type: 'objective_completed',
+        objectiveId: msg.objectiveId,
+        sessionId,
+        pseudo: player.pseudo,
+      });
+      break;
+    }
+
+    case 'validate_event': {
+      if (game.status !== 'EN_COURS') return;
+      if (player.role !== 'PROIE') return;
+      if (!msg.description || msg.description.trim().length === 0) return;
+      const event: GameEvent = {
+        id: uuid(),
+        sessionId,
+        pseudo: player.pseudo,
+        description: msg.description.trim(),
+        latitude: player.position?.latitude,
+        longitude: player.position?.longitude,
+        timestamp: Date.now(),
+      };
+      game.events.push(event);
+      broadcastToAll(game, { type: 'event_validated', event });
       break;
     }
   }

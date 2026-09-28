@@ -32,6 +32,14 @@ export function broadcastToHunters(game: Game, msg: WSServerMessage) {
   }
 }
 
+export function broadcastToPreys(game: Game, msg: WSServerMessage) {
+  for (const p of Object.values(game.players)) {
+    if (p.role === 'PROIE' && p.status !== 'DECONNECTE') {
+      sendTo(p.sessionId, msg);
+    }
+  }
+}
+
 export function broadcastToAll(game: Game, msg: WSServerMessage) {
   for (const p of Object.values(game.players)) {
     sendTo(p.sessionId, msg);

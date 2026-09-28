@@ -1,4 +1,4 @@
-import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination } from '@manhunt/types';
+import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role, GameEvent } from '@manhunt/types';
 import { onWsMessage } from '../api/ws';
 
 export const gameStore = $state<{
@@ -9,6 +9,8 @@ export const gameStore = $state<{
   gameOver: { reason: string; winners: PlayerSnapshot[] } | null;
   gracePeriodActive: boolean;
   outOfZoneWarning: number | null;
+  chatMessages: ChatMessage[];
+  positionHistory: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> | null;
 }>({
   game: null,
   hunterPositions: [],
@@ -17,6 +19,8 @@ export const gameStore = $state<{
   gameOver: null,
   gracePeriodActive: false,
   outOfZoneWarning: null,
+  chatMessages: [],
+  positionHistory: null,
 });
 
 export function initGameListeners() {
@@ -122,6 +126,50 @@ export function initGameListeners() {
 
       case 'game_dissolved':
         gameStore.game = null;
+        break;
+
+      case 'chat_message':
+        gameStore.chatMessages = [...gameStore.chatMessages, msg.message];
+        break;
+
+      case 'chat_history':
+        gameStore.chatMessages = msg.messages;
+        break;
+
+      case 'ping_interval_updated':
+        if (gameStore.game) {
+          gameStore.game.preyPingInterval = msg.newInterval;
+        }
+        break;
+
+      case 'position_history':
+        gameStore.positionHistory = msg.tracks;
+        break;
+
+      case 'objective_added':
+        if (gameStore.game) {
+          gameStore.game.objectives = [...gameStore.game.objectives, msg.objective];
+        }
+        break;
+
+      case 'objective_removed':
+        if (gameStore.game) {
+          gameStore.game.objectives = gameStore.game.objectives.filter((o) => o.id !== msg.objectiveId);
+        }
+        break;
+
+      case 'objective_completed':
+        if (gameStore.game) {
+          gameStore.game.objectives = gameStore.game.objectives.map((o) =>
+            o.id === msg.objectiveId ? { ...o, completedBy: [...o.completedBy, msg.sessionId] } : o,
+          );
+        }
+        break;
+
+      case 'event_validated':
+        if (gameStore.game) {
+          gameStore.game.events = [...gameStore.game.events, msg.event];
+        }
         break;
     }
   });

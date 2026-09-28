@@ -4,6 +4,7 @@ export type Role = 'CHASSEUR' | 'PROIE';
 export type GameStatus = 'LOBBY' | 'EN_COURS' | 'TERMINEE';
 export type PlayerStatus = 'LIBRE' | 'ELIMINE' | 'DECONNECTE';
 export type EliminationStatus = 'EN_ATTENTE' | 'CONFIRMEE' | 'CONTESTEE';
+export type ChatChannel = 'proies' | 'chasseurs' | 'tous';
 
 // ─── Core models ─────────────────────────────────────────
 
@@ -37,6 +38,32 @@ export interface Elimination {
   status: EliminationStatus;
 }
 
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  pseudo: string;
+  channel: ChatChannel;
+  text: string;
+  timestamp: number;
+}
+
+export interface Objective {
+  id: string;
+  title: string;
+  assignedTo: 'proies' | 'chasseurs' | 'tous';
+  completedBy: string[];
+}
+
+export interface GameEvent {
+  id: string;
+  sessionId: string;
+  pseudo: string;
+  description: string;
+  latitude?: number;
+  longitude?: number;
+  timestamp: number;
+}
+
 export interface Game {
   code: string;
   status: GameStatus;
@@ -48,6 +75,12 @@ export interface Game {
   preyPingInterval: number;
   zone?: Zone;
   eliminations: Elimination[];
+  objectives: Objective[];
+  events: GameEvent[];
+  positionHistory: Record<string, Position[]>;
+  chatMessages: ChatMessage[];
+  initialPreyCount?: number;
+  initialPreyPingInterval?: number;
 }
 
 // ─── HTTP payloads ───────────────────────────────────────
@@ -82,6 +115,8 @@ export interface GameSnapshot {
   preyPingInterval: number;
   zone?: Zone;
   eliminations: Elimination[];
+  objectives: Objective[];
+  events: GameEvent[];
 }
 
 export interface PlayerSnapshot {
@@ -108,7 +143,12 @@ export type WSClientMessage =
   | { type: 'update_config'; maxDuration?: number; gracePeriod?: number; preyPingInterval?: number; zone?: Zone }
   | { type: 'randomize_roles'; preyCount: number }
   | { type: 'start_game' }
-  | { type: 'dissolve_game' };
+  | { type: 'dissolve_game' }
+  | { type: 'chat_message'; channel: ChatChannel; text: string }
+  | { type: 'add_objective'; title: string; assignedTo: 'proies' | 'chasseurs' | 'tous' }
+  | { type: 'remove_objective'; objectiveId: string }
+  | { type: 'complete_objective'; objectiveId: string }
+  | { type: 'validate_event'; description: string };
 
 export type WSServerMessage =
   | { type: 'game_state'; game: GameSnapshot }
@@ -129,4 +169,12 @@ export type WSServerMessage =
   | { type: 'game_over'; reason: 'all_eliminated' | 'time_up'; winners: PlayerSnapshot[] }
   | { type: 'game_dissolved' }
   | { type: 'error'; message: string }
-  | { type: 'grace_period_ended' };
+  | { type: 'grace_period_ended' }
+  | { type: 'chat_message'; message: ChatMessage }
+  | { type: 'chat_history'; messages: ChatMessage[] }
+  | { type: 'ping_interval_updated'; newInterval: number }
+  | { type: 'position_history'; tracks: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> }
+  | { type: 'objective_added'; objective: Objective }
+  | { type: 'objective_removed'; objectiveId: string }
+  | { type: 'objective_completed'; objectiveId: string; sessionId: string; pseudo: string }
+  | { type: 'event_validated'; event: GameEvent };
