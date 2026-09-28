@@ -1,11 +1,13 @@
-<script lang="ts">
-	import favicon from '$lib/assets/favicon.svg';
-
-	let { children } = $props();
+<script>
+  import '../app.css';
+  let { children } = $props();
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0f0f0f" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>ManHunt IRL</title>
 </svelte:head>
 
 {@render children()}
