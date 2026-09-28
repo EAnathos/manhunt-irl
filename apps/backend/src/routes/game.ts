@@ -44,6 +44,9 @@ export async function gameRoutes(app: FastifyInstance) {
       gracePeriod: 60,
       preyPingInterval: 120,
       eliminations: [],
+      objectives: [],
+      positionHistory: {},
+      chatMessages: [],
     };
 
     games.set(code, game);

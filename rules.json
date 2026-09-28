@@ -5,11 +5,11 @@
   },
   {
     "title": "Distance au sol",
-    "content": "Les Proies doivent rester à moins de 5 mètres du sol à tout moment. Les Chasseurs ne sont soumis à aucune restriction de hauteur."
+    "content": "Les Proies doivent rester à moins de 5 mètres l'un de l'autre à tout moment. Les Chasseurs ne sont soumis à aucune restriction de distance."
   },
   {
     "title": "Zone de jeu",
-    "content": "Les joueurs doivent rester dans la zone définie avant le début de la partie. Toute Proie sortant de la zone est automatiquement éliminée."
+    "content": "Les joueurs doivent rester dans la zone définie pendant la partie. Toute Proie sortant de la zone est automatiquement éliminée."
   },
   {
     "title": "Visibilité en milieu non éclairé",
@@ -21,6 +21,6 @@
   },
   {
     "title": "Fin de partie",
-    "content": "La partie prend fin lorsque toutes les Proies sont éliminées, ou lorsque le chronomètre atteint zéro. Dans ce dernier cas, les Proies encore en jeu sont déclarées victorieuses."
+    "content": "La partie prend fin lorsque l'ensemble des Proies sont éliminées, ou lorsque le chronomètre atteint zéro. Dans ce dernier cas, les Proies encore en jeu sont déclarées victorieuses."
   }
 ]

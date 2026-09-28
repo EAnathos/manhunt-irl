@@ -1,8 +1,8 @@
 import { v4 as uuid } from 'uuid';
-import type { Game, Elimination, WSServerMessage } from '@manhunt/types';
+import type { Game, Elimination, WSServerMessage, ChatMessage, ChatChannel } from '@manhunt/types';
 import { games } from './store.js';
 import { isInsideZone } from './geo.js';
-import { broadcastToAll, broadcastToHunters, sendToPlayer } from './broadcast.js';
+import { broadcastToAll, broadcastToHunters, broadcastToPreys, sendToPlayer } from './broadcast.js';
 import { gameSnapshot, playerSnapshot } from './snapshot.js';
 
 interface GameTimers {
@@ -44,6 +44,15 @@ function clearGameTimers(code: string) {
 export function startGame(game: Game) {
   game.status = 'EN_COURS';
   game.startedAt = Date.now();
+
+  const preys = Object.values(game.players).filter((p) => p.role === 'PROIE');
+  game.initialPreyCount = preys.length;
+  game.initialPreyPingInterval = game.preyPingInterval;
+
+  for (const p of Object.values(game.players)) {
+    game.positionHistory[p.sessionId] = [];
+  }
+
   const t = getTimers(game.code);
 
   broadcastToAll(game, { type: 'game_started', startedAt: game.startedAt });
@@ -254,12 +263,37 @@ export function arbitrateElimination(game: Game, eliminationId: string, confirme
   return true;
 }
 
+function updatePreyPingInterval(game: Game) {
+  if (!game.initialPreyCount || !game.initialPreyPingInterval) return;
+  const freePreys = Object.values(game.players).filter(
+    (p) => p.role === 'PROIE' && p.status === 'LIBRE'
+  );
+  const newInterval = Math.max(
+    3,
+    Math.round(game.initialPreyPingInterval * (freePreys.length / game.initialPreyCount))
+  );
+  if (newInterval === game.preyPingInterval) return;
+  game.preyPingInterval = newInterval;
+
+  const t = getTimers(game.code);
+  if (t.preyBroadcastInterval) {
+    clearInterval(t.preyBroadcastInterval);
+    t.preyBroadcastInterval = setInterval(() => {
+      broadcastPreyPositions(game);
+    }, game.preyPingInterval * 1000);
+  }
+
+  broadcastToAll(game, { type: 'ping_interval_updated', newInterval });
+}
+
 function checkAllPreyEliminated(game: Game) {
   const freePreys = Object.values(game.players).filter(
     (p) => p.role === 'PROIE' && p.status === 'LIBRE'
   );
   if (freePreys.length === 0) {
     endGame(game, 'all_eliminated');
+  } else {
+    updatePreyPingInterval(game);
   }
 }
 
@@ -275,6 +309,19 @@ export function endGame(game: Game, reason: 'all_eliminated' | 'time_up') {
     .map(playerSnapshot);
 
   broadcastToAll(game, { type: 'game_over', reason, winners });
+
+  const tracks = Object.values(game.players).map((p) => ({
+    sessionId: p.sessionId,
+    pseudo: p.pseudo,
+    role: p.role,
+    positions: (game.positionHistory[p.sessionId] ?? []).map((pos) => ({
+      latitude: pos.latitude,
+      longitude: pos.longitude,
+      timestamp: pos.timestamp,
+    })),
+  }));
+  broadcastToAll(game, { type: 'position_history', tracks });
+
   clearGameTimers(game.code);
   schedulePurge(game.code);
 }
@@ -305,6 +352,19 @@ export function handleReconnect(game: Game, sessionId: string): boolean {
 
   player.lastSeen = Date.now();
   sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game) });
+
+  if (game.chatMessages.length > 0) {
+    const visible = game.chatMessages.filter((m) => {
+      if (m.channel === 'tous') return true;
+      if (m.channel === 'proies' && player.role === 'PROIE') return true;
+      if (m.channel === 'chasseurs' && player.role === 'CHASSEUR') return true;
+      return false;
+    }).slice(-50);
+    if (visible.length > 0) {
+      sendToPlayer(sessionId, { type: 'chat_history', messages: visible });
+    }
+  }
+
   return true;
 }
 
@@ -315,5 +375,50 @@ export function handleDisconnect(game: Game, sessionId: string) {
   if (game.status === 'EN_COURS' && player.status === 'LIBRE') {
     player.status = 'DECONNECTE';
     broadcastToAll(game, { type: 'player_left', sessionId });
+  }
+}
+
+export function handleChatMessage(game: Game, sessionId: string, channel: ChatChannel, text: string): boolean {
+  const player = game.players[sessionId];
+  if (!player) return false;
+  if (channel === 'proies' && player.role !== 'PROIE') return false;
+  if (channel === 'chasseurs' && player.role !== 'CHASSEUR') return false;
+  if (text.trim().length === 0 || text.length > 500) return false;
+
+  const msg: ChatMessage = {
+    id: uuid(),
+    sessionId,
+    pseudo: player.pseudo,
+    channel,
+    text: text.trim(),
+    timestamp: Date.now(),
+  };
+
+  game.chatMessages.push(msg);
+  if (game.chatMessages.length > 200) {
+    game.chatMessages = game.chatMessages.slice(-200);
+  }
+
+  const wsMsg = { type: 'chat_message' as const, message: msg };
+  if (channel === 'tous') {
+    broadcastToAll(game, wsMsg);
+  } else if (channel === 'proies') {
+    broadcastToPreys(game, wsMsg);
+  } else {
+    broadcastToHunters(game, wsMsg);
+  }
+
+  return true;
+}
+
+export function recordPosition(game: Game, sessionId: string, latitude: number, longitude: number) {
+  const pos = { latitude, longitude, timestamp: Date.now() };
+  const player = game.players[sessionId];
+  if (player) {
+    player.position = pos;
+    player.lastSeen = Date.now();
+  }
+  if (game.positionHistory[sessionId]) {
+    game.positionHistory[sessionId].push(pos);
   }
 }

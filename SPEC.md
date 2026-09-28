@@ -118,6 +118,12 @@ classDiagram
 | RG-14 | Historique de positions | Les positions sont conservées en mémoire RAM pendant la durée de la Partie uniquement. Elles sont purgées 5 minutes après la fin de la Partie (pas de persistance disque). |
 | RG-15 | Contenu des règles piloté par JSON | Le texte affiché dans la section « Règles du jeu » est lu depuis un fichier rules.json statique. Toute modification de ce fichier est reflétée sans redéploiement du code applicatif. |
 | RG-16 | Attribution aléatoire des rôles | L'Hôte peut attribuer les rôles de manière aléatoire depuis le lobby. Le nombre de Proies est calculé automatiquement (⅓ des joueurs, min 1, max N−1). L'attribution est effectuée côté serveur (shuffle de Fisher-Yates) et diffusée à tous les joueurs simultanément. |
+| RG-17 | Intervalle de ping dynamique | Lorsqu'une Proie est éliminée, l'intervalle de ping des Proies restantes diminue proportionnellement. Formule : `nouvel_intervalle = intervalle_initial × (proies_restantes / proies_initiales)`. Exemple : 3 Proies initiales, 1 éliminée → l'intervalle passe à 67 % de sa valeur initiale ; 2 éliminées → 33 %. Le plancher est le minimum configurable (3 s). |
+| RG-18 | Historique des positions exportable | Les positions GPS de tous les joueurs sont conservées en mémoire pendant la durée de la partie. À la fin de la partie, l'historique complet est inclus dans le récapitulatif et peut être exporté par les joueurs (format JSON ou GPX). |
+| RG-19 | Chat en jeu | Les joueurs disposent d'espaces de conversation textuels séparés par canal : Proies uniquement, Chasseurs uniquement, et Tous. Un joueur ne voit que les canaux correspondant à son rôle (une Proie ne voit pas le canal Chasseurs et inversement). |
+| RG-20 | Objectifs de partie (mode grande partie) | L'Hôte peut activer un mode « objectifs » proposant une liste de missions secondaires aux Proies et/ou aux Chasseurs. La victoire peut être conditionnée à la complétion d'objectifs en plus de la survie / capture. |
+| RG-22 | Affichage du délai de grâce | Pendant le délai de grâce, un compte à rebours est affiché à tous les joueurs. Les Chasseurs voient le temps restant avant de pouvoir partir à la chasse. Les Proies voient le temps restant pour se cacher. |
+| RG-23 | Carte interactive | Les positions des joueurs sont affichées sur une carte interactive (Leaflet + OpenStreetMap). Les Chasseurs sont représentés par des marqueurs rouges, les Proies par des marqueurs bleus. La zone de jeu, si définie, est affichée en surimpression. Chaque joueur voit sa propre position. Les Proies ne voient que leur propre marqueur. |
 
 ## 4. Exigences fonctionnelles
 
@@ -132,7 +138,7 @@ classDiagram
 | EF-05 | Assigner les rôles manuellement ou aléatoirement | MUST | RG-04, RG-16 |
 | EF-06 | Démarrer la partie (Hôte uniquement) | MUST | RG-02, RG-05 |
 | EF-07 | Envoyer et recevoir les positions GPS en temps réel | MUST | RG-07, RG-08, RG-13 |
-| EF-08 | Afficher la carte avec les Chasseurs et les Proies | MUST | RG-07, RG-08 |
+| EF-08 | Afficher la carte interactive avec marqueurs joueurs et zone | MUST | RG-07, RG-08, RG-23 |
 | EF-09 | Déclarer une élimination | MUST | RG-09 |
 | EF-10 | Confirmer ou contester une élimination | MUST | RG-09 |
 | EF-11 | Arbitrer une élimination contestée (Hôte) | SHOULD | RG-09 |
@@ -142,6 +148,11 @@ classDiagram
 | EF-15 | Gérer la reconnexion | SHOULD | RG-12 |
 | EF-16 | Dissoudre / quitter la partie (Hôte) | MUST | — |
 | EF-17 | Afficher la section Règles depuis un fichier JSON | MUST | RG-15 |
+| EF-18 | Ajuster dynamiquement l'intervalle de ping des Proies | SHOULD | RG-17 |
+| EF-19 | Exporter l'historique des positions en fin de partie | SHOULD | RG-18 |
+| EF-20 | Chat en jeu (canaux Proies / Chasseurs / Tous) | SHOULD | RG-19 |
+| EF-21 | Mode objectifs pour les grandes parties | COULD | RG-20 |
+| EF-23 | Afficher le compte à rebours du délai de grâce | MUST | RG-22 |
 
 ### 4.2. Fiche d'exigence détaillée
 
@@ -189,6 +200,61 @@ classDiagram
 | **Règles** | RG-04, RG-16 |
 | **Critère d'acceptance** | Après un clic sur « Aléatoire », chaque joueur voit son rôle mis à jour en ≤ 1 s. L'attribution garantit au moins 1 Chasseur et 1 Proie. |
 | **Dépendances** | EF-02 (partie créée), lobby actif |
+
+#### EF-18 — Ajuster dynamiquement l'intervalle de ping des Proies
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | Lorsqu'une Proie est éliminée, le serveur recalcule l'intervalle de ping pour les Proies restantes : `nouvel_intervalle = intervalle_initial × (proies_restantes / proies_initiales)`. Le nouvel intervalle est appliqué immédiatement et diffusé à tous les joueurs. Le plancher est le minimum configurable (3 s). |
+| **Acteurs** | Système (automatique) |
+| **Priorité** | SHOULD |
+| **Règles** | RG-17 |
+| **Critère d'acceptance** | Après élimination d'une Proie sur 3, l'intervalle de ping diminue à ~67 % de sa valeur initiale dans un délai ≤ 3 s. |
+| **Dépendances** | EF-09 (élimination), EF-07 (positions GPS) |
+
+#### EF-19 — Exporter l'historique des positions en fin de partie
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | Pendant la partie, le serveur conserve l'historique complet des positions de chaque joueur. À la fin de la partie, cet historique est inclus dans le récapitulatif (EF-13) et chaque joueur peut l'exporter au format JSON. L'historique est purgé avec le reste des données de la partie (5 min après la fin). |
+| **Acteurs** | Joueur |
+| **Priorité** | SHOULD |
+| **Règles** | RG-18 |
+| **Critère d'acceptance** | Le bouton d'export génère un fichier JSON contenant les trajets de tous les joueurs avec horodatage. |
+| **Dépendances** | EF-13 (résumé de partie) |
+
+#### EF-20 — Chat en jeu (canaux Proies / Chasseurs / Tous)
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | Pendant une partie EN_COURS, les joueurs disposent d'un système de messagerie textuelle en temps réel organisé en canaux : **Proies** (visible uniquement par les Proies), **Chasseurs** (visible uniquement par les Chasseurs), **Tous** (visible par tous les joueurs). Le routage des messages est contrôlé côté serveur pour garantir l'isolation des canaux. |
+| **Acteurs** | Joueur |
+| **Priorité** | SHOULD |
+| **Règles** | RG-19 |
+| **Critère d'acceptance** | Un message envoyé sur le canal « Proies » n'est reçu par aucun Chasseur. Un message envoyé sur « Tous » est reçu par tous les joueurs connectés. Latence ≤ 3 s. |
+| **Dépendances** | EF-06 (partie démarrée) |
+
+#### EF-21 — Mode objectifs pour les grandes parties
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | L'Hôte peut activer un mode « objectifs » dans la configuration de la partie. Ce mode propose une liste de missions (définie par l'Hôte ou prédéfinie) que les Proies et/ou les Chasseurs doivent accomplir. La victoire peut être conditionnée à la complétion d'objectifs en plus des conditions standard (survie / élimination totale). |
+| **Acteurs** | Hôte (configuration), Joueur (complétion) |
+| **Priorité** | COULD |
+| **Règles** | RG-20 |
+| **Critère d'acceptance** | L'Hôte peut créer au moins 3 objectifs personnalisés. Les joueurs voient leur progression en temps réel. |
+| **Dépendances** | EF-04 (configuration partie) |
+
+#### EF-22 — Validation manuelle d'événements par les Proies
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | Les Proies peuvent signaler manuellement des événements de jeu : validation d'un passage à un point de contrôle, signalement volontaire de position, ou confirmation d'un objectif. Ces événements sont horodatés et enregistrés dans l'historique de la partie. |
+| **Acteurs** | Proie |
+| **Priorité** | COULD |
+| **Règles** | RG-21 |
+| **Critère d'acceptance** | Une Proie peut valider un événement en ≤ 2 actions. L'événement est visible dans le récapitulatif de fin de partie. |
+| **Dépendances** | EF-21 (objectifs, si activé) |
 
 ## 5. Exigences non fonctionnelles
 
