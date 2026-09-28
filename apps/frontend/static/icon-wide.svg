@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 256">
+  <rect width="960" height="256" rx="32" fill="#0f0f0f"/>
+  <!-- Icon (scaled down from 512 to fit 200x200 centered vertically) -->
+  <g transform="translate(28, 28) scale(0.39)">
+    <!-- Outer ring -->
+    <circle cx="256" cy="256" r="180" fill="none" stroke="#ff4444" stroke-width="18" opacity="0.3"/>
+    <!-- Middle ring -->
+    <circle cx="256" cy="256" r="120" fill="none" stroke="#ff4444" stroke-width="14" opacity="0.6"/>
+    <!-- Inner ring -->
+    <circle cx="256" cy="256" r="60" fill="none" stroke="#ff4444" stroke-width="10"/>
+    <!-- Crosshair lines -->
+    <line x1="256" y1="40" x2="256" y2="160" stroke="#ff4444" stroke-width="8" stroke-linecap="round"/>
+    <line x1="256" y1="352" x2="256" y2="472" stroke="#ff4444" stroke-width="8" stroke-linecap="round"/>
+    <line x1="40" y1="256" x2="160" y2="256" stroke="#ff4444" stroke-width="8" stroke-linecap="round"/>
+    <line x1="352" y1="256" x2="472" y2="256" stroke="#ff4444" stroke-width="8" stroke-linecap="round"/>
+    <!-- Center dot -->
+    <circle cx="256" cy="256" r="12" fill="#ff4444"/>
+  </g>
+  <!-- Text: "Man" in red, "Hunt" in white -->
+  <text x="260" y="148" font-family="Inter, -apple-system, system-ui, sans-serif" font-weight="800" font-size="80" letter-spacing="-2">
+    <tspan fill="#ff4444">Man</tspan><tspan fill="#e8e8e8">Hunt</tspan>
+  </text>
+  <!-- Subtitle -->
+  <text x="262" y="185" font-family="Inter, -apple-system, system-ui, sans-serif" font-weight="400" font-size="22" fill="#888" letter-spacing="1">
+    Chasse en conditions réelles
+  </text>
+</svg>

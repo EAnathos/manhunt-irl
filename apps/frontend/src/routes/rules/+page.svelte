@@ -37,9 +37,9 @@
     </div>
   {:else}
     {#each rules as rule}
-      <div class="card">
-        <h2 style="color: var(--accent); margin-bottom: 0.5rem;">{rule.title}</h2>
-        <p style="line-height: 1.6; color: var(--text-muted);">{rule.content}</p>
+      <div class="card" style="padding: 1rem;">
+        <h2 style="color: var(--accent); margin-bottom: 0.35rem; font-size: 1rem;">{rule.title}</h2>
+        <p style="line-height: 1.5; color: var(--text-muted); font-size: 0.8rem;">{rule.content}</p>
       </div>
     {/each}
   {/if}

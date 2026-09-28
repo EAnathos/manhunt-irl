@@ -128,3 +128,42 @@ h2 {
   justify-content: space-between;
   align-items: center;
 }
+
+@keyframes role-shuffle {
+  0% { transform: rotateX(0deg); opacity: 1; }
+  40% { transform: rotateX(90deg); opacity: 0; }
+  60% { transform: rotateX(-90deg); opacity: 0; }
+  100% { transform: rotateX(0deg); opacity: 1; }
+}
+
+.shuffling .badge {
+  animation: role-shuffle 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px) rotate(-1deg); }
+  40% { transform: translateX(3px) rotate(1deg); }
+  60% { transform: translateX(-2px) rotate(-0.5deg); }
+  80% { transform: translateX(2px) rotate(0.5deg); }
+}
+
+.btn-shuffle {
+  background: linear-gradient(135deg, var(--hunter), var(--prey));
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+.btn-shuffle:hover {
+  filter: brightness(1.15);
+}
+.btn-shuffle:active {
+  animation: shake 0.3s ease-in-out;
+}
+.btn-shuffle .dice {
+  display: inline-block;
+  transition: transform 0.3s;
+}
+.btn-shuffle:hover .dice {
+  transform: rotate(180deg);
+}

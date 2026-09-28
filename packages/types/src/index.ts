@@ -106,6 +106,7 @@ export type WSClientMessage =
   | { type: 'arbitrate_elimination'; eliminationId: string; confirmed: boolean }
   | { type: 'assign_role'; targetSessionId: string; role: Role }
   | { type: 'update_config'; maxDuration?: number; gracePeriod?: number; preyPingInterval?: number; zone?: Zone }
+  | { type: 'randomize_roles'; preyCount: number }
   | { type: 'start_game' }
   | { type: 'dissolve_game' };
 
@@ -114,6 +115,7 @@ export type WSServerMessage =
   | { type: 'player_joined'; player: PlayerSnapshot }
   | { type: 'player_left'; sessionId: string }
   | { type: 'role_assigned'; sessionId: string; role: Role }
+  | { type: 'roles_randomized'; players: Array<{ sessionId: string; role: Role }> }
   | { type: 'config_updated'; maxDuration: number; gracePeriod: number; preyPingInterval: number; zone?: Zone }
   | { type: 'game_started'; startedAt: number }
   | { type: 'hunter_positions'; positions: Array<{ sessionId: string; pseudo: string; latitude: number; longitude: number; timestamp: number }> }

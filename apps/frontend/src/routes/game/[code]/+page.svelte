@@ -12,6 +12,7 @@
   let error = $state('');
   let timer = $state('');
   let timerInterval: ReturnType<typeof setInterval> | null = null;
+  let shuffling = $state(false);
 
   let isHost = $derived(sessionStore.data?.sessionId === gameStore.game?.hostSessionId);
   let myPlayer = $derived(gameStore.game?.players.find((p: PlayerSnapshot) => p.sessionId === sessionStore.data?.sessionId));
@@ -71,6 +72,15 @@
     sendWs({ type: 'start_game' });
   }
 
+  function randomizeRoles() {
+    if (shuffling) return;
+    shuffling = true;
+    const players = gameStore.game?.players ?? [];
+    const preyCount = Math.max(1, Math.floor(players.length / 3));
+    sendWs({ type: 'randomize_roles', preyCount });
+    setTimeout(() => { shuffling = false; }, 600);
+  }
+
   function dissolve() {
     sendWs({ type: 'dissolve_game' });
     logout();
@@ -118,8 +128,15 @@
       </div>
     </div>
 
-    <div class="card">
-      <h2>Joueurs ({game.players.length}/20)</h2>
+    <div class="card" class:shuffling>
+      <div class="flex-between" style="margin-bottom: 0.75rem;">
+        <h2 style="margin-bottom: 0;">Joueurs ({game.players.length}/20)</h2>
+        {#if isHost && game.players.length >= 2}
+          <button class="btn-shuffle" style="padding: 0.4rem 0.9rem; font-size: 0.85rem;" onclick={randomizeRoles} disabled={shuffling}>
+            <span class="dice">🎲</span> Aléatoire
+          </button>
+        {/if}
+      </div>
       <div style="display: flex; flex-direction: column; gap: 0.5rem;">
         {#each game.players as player}
           <div class="flex-between" style="padding: 0.5rem; border-radius: var(--radius); background: var(--bg);">

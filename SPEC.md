@@ -117,6 +117,7 @@ classDiagram
 | RG-13 | Fréquence de ping GPS | La position des Proies est transmise au serveur à une fréquence configurable par l'Hôte avant le démarrage (valeur par défaut : 2 min, minimum : 3 s, maximum : 20 min). La position des Chasseurs est transmise en continu sans intervalle configurable. |
 | RG-14 | Historique de positions | Les positions sont conservées en mémoire RAM pendant la durée de la Partie uniquement. Elles sont purgées 5 minutes après la fin de la Partie (pas de persistance disque). |
 | RG-15 | Contenu des règles piloté par JSON | Le texte affiché dans la section « Règles du jeu » est lu depuis un fichier rules.json statique. Toute modification de ce fichier est reflétée sans redéploiement du code applicatif. |
+| RG-16 | Attribution aléatoire des rôles | L'Hôte peut attribuer les rôles de manière aléatoire depuis le lobby. Le nombre de Proies est calculé automatiquement (⅓ des joueurs, min 1, max N−1). L'attribution est effectuée côté serveur (shuffle de Fisher-Yates) et diffusée à tous les joueurs simultanément. |
 
 ## 4. Exigences fonctionnelles
 
@@ -128,7 +129,7 @@ classDiagram
 | EF-02 | Créer une partie et obtenir un code | MUST | RG-01 |
 | EF-03 | Rejoindre une partie via code | MUST | RG-01 |
 | EF-04 | Configurer les paramètres de la partie (durée, zone, délai de grâce, intervalle de ping GPS) | MUST | RG-06, RG-13 |
-| EF-05 | Assigner les rôles manuellement ou aléatoirement | MUST | RG-04 |
+| EF-05 | Assigner les rôles manuellement ou aléatoirement | MUST | RG-04, RG-16 |
 | EF-06 | Démarrer la partie (Hôte uniquement) | MUST | RG-02, RG-05 |
 | EF-07 | Envoyer et recevoir les positions GPS en temps réel | MUST | RG-07, RG-08, RG-13 |
 | EF-08 | Afficher la carte avec les Chasseurs et les Proies | MUST | RG-07, RG-08 |
@@ -177,6 +178,17 @@ classDiagram
 | **Structure JSON attendue** | Tableau de sections : `[{ "title": string, "content": string }]`. Chaque section est affichée avec son titre et son contenu formaté. |
 | **Critère d'acceptance** | Le contenu de `rules.json` est affiché tel quel sans rechargement de la page. Une modification du fichier JSON est visible au prochain chargement de la section. |
 | **Dépendances** | Accessible à tout moment : avant la partie, depuis le lobby, et pendant une partie EN\_COURS. |
+
+#### EF-05 — Assigner les rôles manuellement ou aléatoirement
+
+| Champ | Valeur |
+| --- | --- |
+| **Description** | L'Hôte peut assigner individuellement le rôle de chaque joueur (Chasseur ↔ Proie) via un bouton de basculement. Il peut également déclencher une attribution aléatoire : le serveur mélange les joueurs et assigne ~⅓ d'entre eux comme Proies (minimum 1, maximum N−1). L'attribution est animée côté client (les badges de rôle s'inversent visuellement) pour que tous les joueurs voient le changement simultanément. |
+| **Acteurs** | Hôte |
+| **Priorité** | MUST |
+| **Règles** | RG-04, RG-16 |
+| **Critère d'acceptance** | Après un clic sur « Aléatoire », chaque joueur voit son rôle mis à jour en ≤ 1 s. L'attribution garantit au moins 1 Chasseur et 1 Proie. |
+| **Dépendances** | EF-02 (partie créée), lobby actif |
 
 ## 5. Exigences non fonctionnelles
 
@@ -409,3 +421,36 @@ Cette section définit le contenu initial du fichier `rules.json` intégré à l
 ```
 
 > **Note :** Ce fichier est à placer à la racine du serveur web. Toute modification est effective au prochain chargement de la section Règles, sans redéploiement applicatif.
+
+## 8. Identité visuelle
+
+### 8.1. Icône de l'application
+
+L'icône de l'application représente une cible / viseur (crosshair) stylisée :
+
+- Fond sombre (`#0f0f0f`) avec coins arrondis
+- Trois anneaux concentriques rouge (`#ff4444`) avec opacité croissante vers le centre
+- Réticule (lignes croisées) en rouge
+- Point central rouge
+
+**Fichiers fournis :**
+
+| Fichier | Usage |
+| --- | --- |
+| `icon.svg` | Source vectorielle, favicon SVG |
+| `icon-192.png` | PWA manifest (taille 192×192) |
+| `icon-512.png` | PWA manifest (taille 512×512) |
+| `icon-wide.svg` | Logo horizontal avec texte « ManHunt » — pour les écrans de chargement, partage social, en-têtes paysage |
+
+### 8.2. Charte couleurs
+
+| Rôle | Couleur | Hex |
+| --- | --- | --- |
+| Accent / Chasseur | Rouge | `#ff4444` |
+| Proie | Bleu | `#44aaff` |
+| Succès | Vert | `#44cc44` |
+| Avertissement | Jaune | `#ffaa00` |
+| Fond principal | Noir profond | `#0f0f0f` |
+| Surface (cartes) | Gris sombre | `#1a1a1a` |
+| Texte principal | Blanc cassé | `#e8e8e8` |
+| Texte secondaire | Gris | `#888888` |

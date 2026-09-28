@@ -49,6 +49,15 @@ export function initGameListeners() {
         }
         break;
 
+      case 'roles_randomized':
+        if (gameStore.game) {
+          gameStore.game.players = gameStore.game.players.map((p) => {
+            const assignment = msg.players.find((a: { sessionId: string }) => a.sessionId === p.sessionId);
+            return assignment ? { ...p, role: assignment.role } : p;
+          });
+        }
+        break;
+
       case 'config_updated':
         if (gameStore.game) {
           gameStore.game.maxDuration = msg.maxDuration;

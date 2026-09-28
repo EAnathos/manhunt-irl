@@ -131,6 +131,25 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
       break;
     }
 
+    case 'randomize_roles': {
+      if (sessionId !== game.hostSessionId) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Only the host can randomize roles' });
+        return;
+      }
+      if (game.status !== 'LOBBY') return;
+      const allPlayers = Object.values(game.players);
+      const preyCount = Math.max(1, Math.min(msg.preyCount, allPlayers.length - 1));
+      const shuffled = [...allPlayers].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < shuffled.length; i++) {
+        shuffled[i].role = i < preyCount ? 'PROIE' : 'CHASSEUR';
+      }
+      broadcastToAll(game, {
+        type: 'roles_randomized',
+        players: allPlayers.map((p) => ({ sessionId: p.sessionId, role: p.role })),
+      });
+      break;
+    }
+
     case 'update_config': {
       if (sessionId !== game.hostSessionId) {
         sendToPlayer(sessionId, { type: 'error', message: 'Only the host can update config' });
