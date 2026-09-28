@@ -1,0 +1,26 @@
+[
+  {
+    "title": "Locomotion",
+    "content": "Les Chasseurs sont libres d'utiliser tout moyen de locomotion à leur disposition (à pied, vélo, trottinette, voiture, etc.). Les Proies se déplacent uniquement à pied."
+  },
+  {
+    "title": "Distance au sol",
+    "content": "Les Proies doivent rester à moins de 5 mètres du sol à tout moment. Les Chasseurs ne sont soumis à aucune restriction de hauteur."
+  },
+  {
+    "title": "Zone de jeu",
+    "content": "Les joueurs doivent rester dans la zone définie avant le début de la partie. Toute Proie sortant de la zone est automatiquement éliminée."
+  },
+  {
+    "title": "Visibilité en milieu non éclairé",
+    "content": "Dans un environnement sans éclairage ambiant (nuit, zone sombre), les Proies sont tenues de porter une source de lumière visible (lampe frontale, lampe de poche ou équivalent)."
+  },
+  {
+    "title": "Élimination",
+    "content": "Un Chasseur élimine une Proie en la touchant physiquement. Il doit ensuite déclarer l'élimination dans l'application. La Proie dispose d'un délai pour confirmer ou contester."
+  },
+  {
+    "title": "Fin de partie",
+    "content": "La partie prend fin lorsque toutes les Proies sont éliminées, ou lorsque le chronomètre atteint zéro. Dans ce dernier cas, les Proies encore en jeu sont déclarées victorieuses."
+  }
+]
