@@ -59,21 +59,22 @@ Cela génère :
 
 ## Déploiement
 
-### 1. Backend (PM2)
+### 1. Cloner et builder sur le serveur
 
 ```bash
-# Sur le serveur
-cd /var/www/manhunt
-npm ci --production
-pm2 start apps/backend/dist/server.js --name manhunt
-pm2 save
+cd ~
+git clone https://github.com/EAnathos/manhunt-irl.git
+cd manhunt-irl
+npm install
+npm run build
 ```
 
-### 2. Frontend (fichiers statiques)
+### 2. Backend (PM2)
 
 ```bash
-# Copier le build vers le dossier servi par Nginx
-cp -r apps/frontend/build/ /var/www/manhunt/frontend/build/
+cd ~/manhunt-irl
+pm2 start apps/backend/dist/server.js --name manhunt
+pm2 save
 ```
 
 ### 3. Nginx
@@ -87,7 +88,9 @@ sudo ln -s /etc/nginx/sites-available/manhunt /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-La config gère :
+La config Nginx pointe vers `~/manhunt-irl/apps/frontend/build` pour les fichiers statiques et reverse-proxy l'API/WS vers le backend sur `:3001`.
+
+Elle gère :
 - Redirection HTTP → HTTPS
 - Reverse proxy API (`/api/`) → Fastify `:3001`
 - Upgrade WebSocket (`/ws`) → Fastify `:3001`
@@ -100,7 +103,17 @@ La config gère :
 sudo certbot --nginx -d manhunt.example.com
 ```
 
-### 5. Règles du jeu
+### 5. Mise à jour
+
+```bash
+cd ~/manhunt-irl
+git pull
+npm install
+npm run build
+pm2 restart manhunt
+```
+
+### 6. Règles du jeu
 
 Le fichier `rules.json` à la racine du projet contient les règles affichées dans l'app. Il est modifiable sans redéployer le code — un simple rechargement de la page suffit.
 
