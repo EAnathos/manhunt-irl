@@ -254,7 +254,7 @@
               <span class="badge" class:badge-hunter={player.role === 'CHASSEUR'} class:badge-prey={player.role === 'PROIE'}>
                 {player.role === 'CHASSEUR' ? 'Chasseur' : 'Proie'}
               </span>
-              {#if isHost && player.sessionId !== sessionStore.data?.sessionId}
+              {#if isHost}
                 <button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;"
                   onclick={() => assignRole(player.sessionId, player.role === 'CHASSEUR' ? 'PROIE' : 'CHASSEUR')}>
                   ↔
