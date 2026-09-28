@@ -6,6 +6,7 @@
   import { connectWs, sendWs, disconnectWs } from '$lib/api/ws';
   import { gameStore, initGameListeners } from '$lib/stores/game.svelte';
   import type { Role, PlayerSnapshot, ChatChannel } from '@manhunt/types';
+  import GameMap from '$lib/components/GameMap.svelte';
 
   let geoWatchId: number | null = null;
   let unsub: (() => void) | null = null;
@@ -26,6 +27,7 @@
   let objectiveTarget = $state<'proies' | 'chasseurs' | 'tous'>('tous');
 
   let eventDesc = $state('');
+  let graceTimer = $state('');
 
   let isHost = $derived(sessionStore.data?.sessionId === gameStore.game?.hostSessionId);
   let myPlayer = $derived(gameStore.game?.players.find((p: PlayerSnapshot) => p.sessionId === sessionStore.data?.sessionId));
@@ -75,6 +77,7 @@
     const g = gameStore.game;
     if (!g?.startedAt || g.status !== 'EN_COURS') {
       timer = '';
+      graceTimer = '';
       return;
     }
     const elapsed = Math.floor((Date.now() - g.startedAt) / 1000);
@@ -82,6 +85,15 @@
     const min = Math.floor(remaining / 60);
     const sec = remaining % 60;
     timer = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+
+    if (gameStore.gracePeriodActive) {
+      const graceRemaining = Math.max(0, g.gracePeriod - elapsed);
+      const gm = Math.floor(graceRemaining / 60);
+      const gs = graceRemaining % 60;
+      graceTimer = `${gm.toString().padStart(2, '0')}:${gs.toString().padStart(2, '0')}`;
+    } else {
+      graceTimer = '';
+    }
   }
 
   function assignRole(targetSessionId: string, role: Role) {
@@ -415,9 +427,22 @@
 
     {#if gameStore.gracePeriodActive}
       <div class="card" style="text-align: center; border-color: var(--warning); color: var(--warning);">
-        ⏳ Délai de grâce — Les Proies se cachent !
+        <div style="font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums;">
+          ⏳ {graceTimer}
+        </div>
+        <div style="font-size: 0.85rem; margin-top: 0.25rem;">Délai de grâce — Les Proies se cachent !</div>
       </div>
     {/if}
+
+    <GameMap
+      hunterPositions={gameStore.hunterPositions}
+      preyPositions={gameStore.preyPositions}
+      {myPosition}
+      mySessionId={sessionStore.data?.sessionId ?? ''}
+      myRole={myPlayer?.role ?? 'CHASSEUR'}
+      zone={game.zone}
+      gracePeriodActive={gameStore.gracePeriodActive}
+    />
 
     {#if gameStore.outOfZoneWarning != null}
       <div class="card" style="text-align: center; border-color: var(--accent); color: var(--accent); font-weight: 700;">

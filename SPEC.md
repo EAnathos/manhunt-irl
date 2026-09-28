@@ -123,6 +123,8 @@ classDiagram
 | RG-19 | Chat en jeu | Les joueurs disposent d'espaces de conversation textuels séparés par canal : Proies uniquement, Chasseurs uniquement, et Tous. Un joueur ne voit que les canaux correspondant à son rôle (une Proie ne voit pas le canal Chasseurs et inversement). |
 | RG-20 | Objectifs de partie (mode grande partie) | L'Hôte peut activer un mode « objectifs » proposant une liste de missions secondaires aux Proies et/ou aux Chasseurs. La victoire peut être conditionnée à la complétion d'objectifs en plus de la survie / capture. |
 | RG-21 | Validation manuelle par les Proies | En complément de la confirmation d'élimination (RG-09), les Proies peuvent signaler volontairement leur position ou valider manuellement un événement de jeu (ex. passage dans un point de contrôle). |
+| RG-22 | Affichage du délai de grâce | Pendant le délai de grâce, un compte à rebours est affiché à tous les joueurs. Les Chasseurs voient le temps restant avant de pouvoir partir à la chasse. Les Proies voient le temps restant pour se cacher. |
+| RG-23 | Carte interactive | Les positions des joueurs sont affichées sur une carte interactive (Leaflet + OpenStreetMap). Les Chasseurs sont représentés par des marqueurs rouges, les Proies par des marqueurs bleus. La zone de jeu, si définie, est affichée en surimpression. Chaque joueur voit sa propre position. Les Proies ne voient que leur propre marqueur. |
 
 ## 4. Exigences fonctionnelles
 
@@ -137,7 +139,7 @@ classDiagram
 | EF-05 | Assigner les rôles manuellement ou aléatoirement | MUST | RG-04, RG-16 |
 | EF-06 | Démarrer la partie (Hôte uniquement) | MUST | RG-02, RG-05 |
 | EF-07 | Envoyer et recevoir les positions GPS en temps réel | MUST | RG-07, RG-08, RG-13 |
-| EF-08 | Afficher la carte avec les Chasseurs et les Proies | MUST | RG-07, RG-08 |
+| EF-08 | Afficher la carte interactive avec marqueurs joueurs et zone | MUST | RG-07, RG-08, RG-23 |
 | EF-09 | Déclarer une élimination | MUST | RG-09 |
 | EF-10 | Confirmer ou contester une élimination | MUST | RG-09 |
 | EF-11 | Arbitrer une élimination contestée (Hôte) | SHOULD | RG-09 |
@@ -152,6 +154,7 @@ classDiagram
 | EF-20 | Chat en jeu (canaux Proies / Chasseurs / Tous) | SHOULD | RG-19 |
 | EF-21 | Mode objectifs pour les grandes parties | COULD | RG-20 |
 | EF-22 | Validation manuelle d'événements par les Proies | COULD | RG-21 |
+| EF-23 | Afficher le compte à rebours du délai de grâce | MUST | RG-22 |
 
 ### 4.2. Fiche d'exigence détaillée
 
