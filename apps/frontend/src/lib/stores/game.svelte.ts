@@ -1,5 +1,6 @@
 import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role } from '@manhunt/types';
 import { onWsMessage } from '../api/ws';
+import { sessionStore } from './session.svelte';
 
 export const gameStore = $state<{
   game: GameSnapshot | null;
@@ -136,7 +137,9 @@ export function initGameListeners() {
 
       case 'chat_message':
         gameStore.chatMessages = [...gameStore.chatMessages, msg.message];
-        gameStore.unreadChatCount++;
+        if (msg.message.sessionId !== sessionStore.data?.sessionId) {
+          gameStore.unreadChatCount++;
+        }
         break;
 
       case 'chat_history':

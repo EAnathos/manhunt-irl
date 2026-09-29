@@ -562,32 +562,6 @@
         </div>
       {/if}
 
-      <!-- Hunter positions detail -->
-      {#if myPlayer?.role === 'CHASSEUR'}
-        {#if gameStore.hunterPositions.length > 0}
-          <div class="sheet-section">
-            <h3 class="sheet-heading">Positions chasseurs</h3>
-            {#each gameStore.hunterPositions as h}
-              <div class="position-row">
-                <span style="color: var(--hunter);">{h.pseudo}</span>
-                <span style="color: var(--text-muted); font-size: 0.75rem;">{h.latitude.toFixed(4)}, {h.longitude.toFixed(4)}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-
-        {#if !gameStore.gracePeriodActive && gameStore.preyPositions.length > 0}
-          <div class="sheet-section">
-            <h3 class="sheet-heading">Positions proies</h3>
-            {#each gameStore.preyPositions as p}
-              <div class="position-row">
-                <span style="color: var(--prey);">{p.pseudo}</span>
-                <span style="color: var(--text-muted); font-size: 0.75rem;">{p.latitude.toFixed(4)}, {p.longitude.toFixed(4)}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      {/if}
     </BottomSheet>
 
   {:else if gameStore.game.status === 'TERMINEE'}
