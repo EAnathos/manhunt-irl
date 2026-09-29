@@ -8,6 +8,31 @@
   let mode = $state<'menu' | 'create' | 'join'>('menu');
   let error = $state('');
   let loading = $state(false);
+  let deferredPrompt = $state<any>(null);
+  let isStandalone = $state(false);
+
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    isStandalone = window.matchMedia('(display-mode: standalone)').matches
+      || (navigator as any).standalone === true;
+
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+    });
+
+    window.addEventListener('appinstalled', () => {
+      deferredPrompt = null;
+    });
+  });
+
+  async function installApp() {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') deferredPrompt = null;
+  }
 
   async function handleCreate() {
     if (!pseudo.trim()) return;
@@ -54,6 +79,11 @@
       <button class="btn-primary" onclick={() => mode = 'create'}>Créer une partie</button>
       <button class="btn-secondary" onclick={() => mode = 'join'}>Rejoindre une partie</button>
       <button class="btn-secondary" onclick={() => goto('/rules')}>Règles du jeu</button>
+      {#if deferredPrompt && !isStandalone}
+        <button class="btn-secondary" onclick={installApp} style="border-color: var(--accent); color: var(--accent);">
+          Installer l'application
+        </button>
+      {/if}
     </div>
 
   {:else if mode === 'create'}

@@ -4,9 +4,11 @@
   import { goto } from '$app/navigation';
   import { sessionStore, logout } from '$lib/stores/session.svelte';
   import { connectWs, sendWs, disconnectWs } from '$lib/api/ws';
-  import { gameStore, initGameListeners } from '$lib/stores/game.svelte';
+  import { gameStore, initGameListeners, resetUnreadChat } from '$lib/stores/game.svelte';
   import type { Role, PlayerSnapshot, ChatChannel } from '@manhunt/types';
   import GameMap from '$lib/components/GameMap.svelte';
+  import BottomSheet from '$lib/components/BottomSheet.svelte';
+  import ChatDrawer from '$lib/components/ChatDrawer.svelte';
 
   let geoWatchId: number | null = null;
   let unsub: (() => void) | null = null;
@@ -19,9 +21,8 @@
   let zoneRadius = $state(500);
 
   let chatOpen = $state(false);
-  let chatInput = $state('');
   let activeChannel = $state<ChatChannel>('tous');
-  let chatEndRef: HTMLDivElement | undefined = $state();
+  let sheetOpen = $state(false);
 
   let objectiveTitle = $state('');
   let objectiveTarget = $state<'proies' | 'chasseurs' | 'tous'>('tous');
@@ -32,9 +33,6 @@
   let myPlayer = $derived(gameStore.game?.players.find((p: PlayerSnapshot) => p.sessionId === sessionStore.data?.sessionId));
   let visibleChannels = $derived<ChatChannel[]>(
     myPlayer?.role === 'CHASSEUR' ? ['chasseurs', 'tous'] : myPlayer?.role === 'PROIE' ? ['proies', 'tous'] : ['tous']
-  );
-  let filteredMessages = $derived(
-    gameStore.chatMessages.filter((m) => m.channel === activeChannel)
   );
 
   onMount(() => {
@@ -169,13 +167,13 @@
     sendWs({ type: 'update_config', zone: undefined });
   }
 
-  function sendChat() {
-    const text = chatInput.trim();
-    if (!text) return;
+  function sendChat(text: string) {
     sendWs({ type: 'chat_message', channel: activeChannel, text });
-    chatInput = '';
-    setTimeout(() => chatEndRef?.scrollIntoView({ behavior: 'smooth' }), 50);
   }
+
+  $effect(() => {
+    if (chatOpen) resetUnreadChat();
+  });
 
   function addObjective() {
     if (!objectiveTitle.trim()) return;
@@ -404,29 +402,10 @@
 
   {:else if gameStore.game.status === 'EN_COURS'}
     {@const game = gameStore.game}
-    <!-- ACTIVE GAME -->
-    <div class="flex-between" style="margin-bottom: 0.5rem;">
-      <div>
-        <span class="badge" class:badge-hunter={myPlayer?.role === 'CHASSEUR'} class:badge-prey={myPlayer?.role === 'PROIE'}>
-          {myPlayer?.role === 'CHASSEUR' ? 'Chasseur' : 'Proie'}
-        </span>
-      </div>
-      {#if timer}
-        <div style="font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums;">
-          {timer}
-        </div>
-      {/if}
-    </div>
-
-    {#if gameStore.gracePeriodActive}
-      <div class="card" style="text-align: center; border-color: var(--warning); color: var(--warning);">
-        <div style="font-size: 1.4rem; font-weight: 700; font-variant-numeric: tabular-nums;">
-          ⏳ {graceTimer}
-        </div>
-        <div style="font-size: 0.85rem; margin-top: 0.25rem;">Délai de grâce — Les Proies se cachent !</div>
-      </div>
-    {/if}
-
+    {@const aliveHunters = game.players.filter((p: PlayerSnapshot) => p.role === 'CHASSEUR' && p.status === 'LIBRE').length}
+    {@const alivePrey = game.players.filter((p: PlayerSnapshot) => p.role === 'PROIE' && p.status === 'LIBRE').length}
+    {@const eliminated = game.players.filter((p: PlayerSnapshot) => p.status === 'ELIMINE').length}
+    <!-- ACTIVE GAME — fullscreen map -->
     <GameMap
       hunterPositions={gameStore.hunterPositions}
       preyPositions={gameStore.preyPositions}
@@ -435,174 +414,181 @@
       myRole={myPlayer?.role ?? 'CHASSEUR'}
       zone={game.zone}
       gracePeriodActive={gameStore.gracePeriodActive}
+      fullscreen
     />
 
-    {#if gameStore.outOfZoneWarning != null}
-      <div class="card" style="text-align: center; border-color: var(--accent); color: var(--accent); font-weight: 700;">
-        ⚠ Hors zone ! Retourne dans la zone ({gameStore.outOfZoneWarning}s restantes)
+    <!-- Top overlay: role + timer -->
+    <div class="game-overlay-top">
+      <div class="overlay-role">
+        <span class="badge" class:badge-hunter={myPlayer?.role === 'CHASSEUR'} class:badge-prey={myPlayer?.role === 'PROIE'}>
+          {myPlayer?.role === 'CHASSEUR' ? 'Chasseur' : 'Proie'}
+        </span>
+      </div>
+      {#if timer}
+        <div class="overlay-timer">{timer}</div>
+      {/if}
+    </div>
+
+    <!-- Grace period banner -->
+    {#if gameStore.gracePeriodActive}
+      <div class="grace-banner">
+        <span class="grace-timer">{graceTimer}</span>
+        <span class="grace-label">Délai de grâce</span>
       </div>
     {/if}
 
+    <!-- Out of zone warning -->
+    {#if gameStore.outOfZoneWarning != null}
+      <div class="zone-warning">
+        ⚠ Hors zone ! ({gameStore.outOfZoneWarning}s)
+      </div>
+    {/if}
+
+    <!-- Pending elimination overlay -->
     {#if gameStore.pendingElimination && myPlayer}
       {@const pending = gameStore.pendingElimination}
-      <div class="card" style="border-color: var(--warning);">
-        <h2 style="color: var(--warning);">Élimination déclarée</h2>
-        <p>{pending.hunterPseudo} → {pending.preyPseudo}</p>
-        {#if pending.preyId === sessionStore.data?.sessionId && pending.status === 'EN_ATTENTE'}
-          <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
-            <button class="btn-primary" style="flex: 1; background: var(--success);" onclick={() => confirmElim(pending.id)}>
-              Confirmer
-            </button>
-            <button class="btn-primary" style="flex: 1;" onclick={() => contestElim(pending.id)}>
-              Contester
-            </button>
-          </div>
-        {/if}
-        {#if isHost && pending.status === 'CONTESTEE'}
-          <div style="display: flex; gap: 0.5rem; margin-top: 0.75rem;">
-            <button class="btn-primary" style="flex: 1; background: var(--success);" onclick={() => arbitrate(pending.id, true)}>
-              Valider
-            </button>
-            <button class="btn-primary" style="flex: 1;" onclick={() => arbitrate(pending.id, false)}>
-              Rejeter
-            </button>
-          </div>
-        {/if}
+      <div class="elim-overlay">
+        <div class="elim-card">
+          <div class="elim-title">Élimination déclarée</div>
+          <div class="elim-players">{pending.hunterPseudo} → {pending.preyPseudo}</div>
+          {#if pending.preyId === sessionStore.data?.sessionId && pending.status === 'EN_ATTENTE'}
+            <div class="elim-actions">
+              <button class="btn-primary" style="flex: 1; background: var(--success);" onclick={() => confirmElim(pending.id)}>Confirmer</button>
+              <button class="btn-primary" style="flex: 1;" onclick={() => contestElim(pending.id)}>Contester</button>
+            </div>
+          {/if}
+          {#if isHost && pending.status === 'CONTESTEE'}
+            <div class="elim-actions">
+              <button class="btn-primary" style="flex: 1; background: var(--success);" onclick={() => arbitrate(pending.id, true)}>Valider</button>
+              <button class="btn-primary" style="flex: 1;" onclick={() => arbitrate(pending.id, false)}>Rejeter</button>
+            </div>
+          {/if}
+        </div>
       </div>
     {/if}
 
-    {#if myPlayer?.role === 'CHASSEUR'}
-      <div class="card">
-        <h2>Chasseurs</h2>
-        {#each gameStore.hunterPositions as h}
-          <div class="flex-between" style="padding: 0.25rem 0; font-size: 0.9rem;">
-            <span style="color: var(--hunter);">{h.pseudo}</span>
-            <span style="color: var(--text-muted); font-size: 0.8rem;">
-              {h.latitude.toFixed(5)}, {h.longitude.toFixed(5)}
-            </span>
+    <!-- Chat drawer (right side) -->
+    <ChatDrawer
+      bind:open={chatOpen}
+      messages={gameStore.chatMessages}
+      {visibleChannels}
+      {activeChannel}
+      onChannelChange={(ch) => activeChannel = ch}
+      onSend={sendChat}
+      unreadCount={gameStore.unreadChatCount}
+    />
+
+    <!-- Bottom sheet -->
+    <BottomSheet bind:open={sheetOpen}>
+      {#snippet peekContent()}
+        <div class="peek-bar">
+          <div class="peek-title">Partie en cours</div>
+          <div class="peek-stats">
+            <span class="peek-stat" style="color: var(--hunter);">{aliveHunters} <small>chasseurs</small></span>
+            <span class="peek-divider">|</span>
+            <span class="peek-stat" style="color: var(--prey);">{alivePrey} <small>proies</small></span>
+            {#if eliminated > 0}
+              <span class="peek-divider">|</span>
+              <span class="peek-stat" style="color: var(--text-muted);">{eliminated} <small>éliminés</small></span>
+            {/if}
           </div>
-        {/each}
-        {#if gameStore.hunterPositions.length === 0}
-          <p style="color: var(--text-muted); font-size: 0.85rem;">En attente de positions...</p>
+        </div>
+      {/snippet}
+
+      <!-- Elimination actions (hunters only) -->
+      {#if myPlayer?.role === 'CHASSEUR'}
+        {@const freePrey = game.players.filter((p: PlayerSnapshot) => p.role === 'PROIE' && p.status === 'LIBRE')}
+        {#if freePrey.length > 0}
+          <div class="sheet-section">
+            <h3 class="sheet-heading">Éliminer une Proie</h3>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+              {#each freePrey as prey}
+                <button class="btn-secondary" style="padding: 10px 16px; font-size: 0.9rem;" onclick={() => declareElimination(prey.sessionId)}>
+                  🎯 {prey.pseudo}
+                </button>
+              {/each}
+            </div>
+          </div>
         {/if}
+      {:else}
+        <div class="sheet-section" style="text-align: center;">
+          <div style="font-size: 1.2rem; margin-bottom: 4px;">🏃 Reste en mouvement !</div>
+          <div style="color: var(--text-muted); font-size: 0.85rem;">Ping toutes les {formatDuration(game.preyPingInterval)}</div>
+        </div>
+      {/if}
+
+      <!-- Players list -->
+      <div class="sheet-section">
+        <h3 class="sheet-heading">Joueurs</h3>
+        <div class="player-list">
+          {#each game.players as player}
+            <div class="player-row">
+              <div class="player-info" style:opacity={player.status === 'ELIMINE' ? 0.4 : 1}>
+                <span class="player-role-dot" style="background: {player.role === 'CHASSEUR' ? 'var(--hunter)' : 'var(--prey)'}"></span>
+                <span>{player.pseudo}</span>
+              </div>
+              <div class="player-status">
+                {#if player.status === 'ELIMINE'}
+                  <span style="color: var(--text-muted); font-size: 0.75rem;">Éliminé</span>
+                {:else if player.status === 'DECONNECTE'}
+                  <span style="color: var(--warning); font-size: 0.75rem;">Déco</span>
+                {:else}
+                  <span style="color: var(--success); font-size: 0.75rem;">En jeu</span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
       </div>
 
-      {#if !gameStore.gracePeriodActive}
-        <div class="card">
-          <h2>Proies</h2>
-          {#each gameStore.preyPositions as p}
-            <div class="flex-between" style="padding: 0.25rem 0; font-size: 0.9rem;">
-              <span style="color: var(--prey);">{p.pseudo}</span>
-              <span style="color: var(--text-muted); font-size: 0.8rem;">
-                {p.latitude.toFixed(5)}, {p.longitude.toFixed(5)}
+      <!-- Objectives -->
+      {#if game.objectives.length > 0}
+        <div class="sheet-section">
+          <h3 class="sheet-heading">Objectifs</h3>
+          {#each game.objectives.filter((o) => o.assignedTo === 'tous' || (o.assignedTo === 'proies' && myPlayer?.role === 'PROIE') || (o.assignedTo === 'chasseurs' && myPlayer?.role === 'CHASSEUR')) as obj}
+            {@const done = obj.completedBy.includes(sessionStore.data?.sessionId ?? '')}
+            <div class="objective-row">
+              <span style:opacity={done ? 0.5 : 1} style:text-decoration={done ? 'line-through' : 'none'}>
+                {obj.title}
               </span>
+              {#if !done && myPlayer?.status === 'LIBRE'}
+                <button class="btn-secondary" style="padding: 4px 10px; font-size: 0.75rem;"
+                  onclick={() => completeObjective(obj.id)}>Fait</button>
+              {:else if done}
+                <span style="color: var(--success); font-size: 0.8rem;">✓</span>
+              {/if}
             </div>
           {/each}
-          {#if gameStore.preyPositions.length === 0}
-            <p style="color: var(--text-muted); font-size: 0.85rem;">Prochain ping dans {formatDuration(game.preyPingInterval)}</p>
-          {/if}
         </div>
       {/if}
 
-      <div class="card">
-        <h2>Éliminer une Proie</h2>
-        <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-          {#each game.players.filter((p: PlayerSnapshot) => p.role === 'PROIE' && p.status === 'LIBRE') as prey}
-            <button class="btn-secondary" onclick={() => declareElimination(prey.sessionId)}>
-              🎯 {prey.pseudo}
-            </button>
-          {/each}
-          {#if game.players.filter((p: PlayerSnapshot) => p.role === 'PROIE' && p.status === 'LIBRE').length === 0}
-            <p style="color: var(--text-muted); font-size: 0.85rem;">Toutes les Proies sont éliminées</p>
-          {/if}
-        </div>
-      </div>
-    {:else}
-      <div class="card" style="text-align: center;">
-        <p style="font-size: 1.2rem; margin-bottom: 0.5rem;">🏃 Reste en mouvement !</p>
-        <p style="color: var(--text-muted); font-size: 0.85rem;">Ta position est envoyée toutes les {formatDuration(game.preyPingInterval)}</p>
-      </div>
-    {/if}
-
-    {#if game.objectives.length > 0}
-      <div class="card">
-        <h2>Objectifs</h2>
-        {#each game.objectives.filter((o) => o.assignedTo === 'tous' || (o.assignedTo === 'proies' && myPlayer?.role === 'PROIE') || (o.assignedTo === 'chasseurs' && myPlayer?.role === 'CHASSEUR')) as obj}
-          {@const done = obj.completedBy.includes(sessionStore.data?.sessionId ?? '')}
-          <div class="flex-between" style="padding: 0.4rem 0; font-size: 0.9rem;">
-            <span style:opacity={done ? 0.5 : 1} style:text-decoration={done ? 'line-through' : 'none'}>
-              {obj.title}
-            </span>
-            {#if !done && myPlayer?.status === 'LIBRE'}
-              <button class="btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;"
-                onclick={() => completeObjective(obj.id)}>Fait</button>
-            {:else if done}
-              <span style="color: var(--success); font-size: 0.75rem;">✓</span>
-            {/if}
+      <!-- Hunter positions detail -->
+      {#if myPlayer?.role === 'CHASSEUR'}
+        {#if gameStore.hunterPositions.length > 0}
+          <div class="sheet-section">
+            <h3 class="sheet-heading">Positions chasseurs</h3>
+            {#each gameStore.hunterPositions as h}
+              <div class="position-row">
+                <span style="color: var(--hunter);">{h.pseudo}</span>
+                <span style="color: var(--text-muted); font-size: 0.75rem;">{h.latitude.toFixed(4)}, {h.longitude.toFixed(4)}</span>
+              </div>
+            {/each}
           </div>
-        {/each}
-      </div>
-    {/if}
+        {/if}
 
-    <div class="card">
-      <h2>Joueurs</h2>
-      {#each game.players as player}
-        <div class="flex-between" style="padding: 0.25rem 0; font-size: 0.9rem;">
-          <span style:opacity={player.status === 'ELIMINE' ? 0.4 : 1}>
-            {player.pseudo}
-          </span>
-          <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <span class="badge" class:badge-hunter={player.role === 'CHASSEUR'} class:badge-prey={player.role === 'PROIE'}>
-              {player.role === 'CHASSEUR' ? '🔴' : '🔵'}
-            </span>
-            {#if player.status === 'ELIMINE'}
-              <span style="color: var(--text-muted); font-size: 0.75rem;">Éliminé</span>
-            {:else if player.status === 'DECONNECTE'}
-              <span style="color: var(--warning); font-size: 0.75rem;">Déco</span>
-            {/if}
+        {#if !gameStore.gracePeriodActive && gameStore.preyPositions.length > 0}
+          <div class="sheet-section">
+            <h3 class="sheet-heading">Positions proies</h3>
+            {#each gameStore.preyPositions as p}
+              <div class="position-row">
+                <span style="color: var(--prey);">{p.pseudo}</span>
+                <span style="color: var(--text-muted); font-size: 0.75rem;">{p.latitude.toFixed(4)}, {p.longitude.toFixed(4)}</span>
+              </div>
+            {/each}
           </div>
-        </div>
-      {/each}
-    </div>
-
-    <!-- CHAT -->
-    <div class="card">
-      <button type="button" class="flex-between" style="margin-bottom: 0.5rem; cursor: pointer; width: 100%; background: none; border: none; padding: 0; color: inherit;" onclick={() => chatOpen = !chatOpen}>
-        <h2 style="margin-bottom: 0;">Chat</h2>
-        <span style="color: var(--text-muted); font-size: 0.85rem;">{chatOpen ? '▲' : '▼'}</span>
-      </button>
-      {#if chatOpen}
-        <div style="display: flex; gap: 0.4rem; margin-bottom: 0.5rem;">
-          {#each visibleChannels as ch}
-            <button class:btn-primary={activeChannel === ch} class:btn-secondary={activeChannel !== ch}
-              style="padding: 0.3rem 0.6rem; font-size: 0.75rem; flex: 1;"
-              onclick={() => activeChannel = ch}>
-              {ch === 'tous' ? 'Tous' : ch === 'proies' ? 'Proies' : 'Chasseurs'}
-            </button>
-          {/each}
-        </div>
-        <div style="max-height: 200px; overflow-y: auto; margin-bottom: 0.5rem; display: flex; flex-direction: column; gap: 0.25rem;">
-          {#each filteredMessages as msg}
-            <div style="font-size: 0.8rem;">
-              <span style="color: var(--text-muted);">{formatTime(msg.timestamp)}</span>
-              <span style="font-weight: 600;">{msg.pseudo}</span>
-              <span>{msg.text}</span>
-            </div>
-          {/each}
-          {#if filteredMessages.length === 0}
-            <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center;">Aucun message</p>
-          {/if}
-          <div bind:this={chatEndRef}></div>
-        </div>
-        <div style="display: flex; gap: 0.4rem;">
-          <input type="text" placeholder="Message..." bind:value={chatInput}
-            onkeydown={(e) => { if (e.key === 'Enter') sendChat(); }}
-            style="flex: 1; padding: 0.5rem; font-size: 0.85rem;" />
-          <button class="btn-primary" onclick={sendChat} disabled={!chatInput.trim()}
-            style="padding: 0.5rem 0.75rem; font-size: 0.85rem;">Envoyer</button>
-        </div>
+        {/if}
       {/if}
-    </div>
+    </BottomSheet>
 
   {:else if gameStore.game.status === 'TERMINEE'}
     {@const game = gameStore.game}
