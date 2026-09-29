@@ -12,9 +12,10 @@
     myRole: 'CHASSEUR' | 'PROIE';
     zone?: Zone;
     gracePeriodActive: boolean;
+    fullscreen?: boolean;
   }
 
-  let { hunterPositions, preyPositions, myPosition, mySessionId, myRole, zone, gracePeriodActive }: Props = $props();
+  let { hunterPositions, preyPositions, myPosition, mySessionId, myRole, zone, gracePeriodActive, fullscreen = false }: Props = $props();
 
   let mapContainer: HTMLDivElement | undefined = $state();
   let map: L.Map | null = null;
@@ -152,9 +153,22 @@
   });
 </script>
 
-<div bind:this={mapContainer} style="width: 100%; height: 280px; border-radius: var(--radius); overflow: hidden;"></div>
+<div bind:this={mapContainer} class="map-container" class:fullscreen></div>
 
 <style>
+  .map-container {
+    width: 100%;
+    height: 280px;
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .map-container.fullscreen {
+    position: fixed;
+    inset: 0;
+    height: 100%;
+    border-radius: 0;
+    z-index: 0;
+  }
   :global(.map-marker) {
     background: none !important;
     border: none !important;

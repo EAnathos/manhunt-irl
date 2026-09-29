@@ -11,7 +11,8 @@
       "name": "backend",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["tsx", "apps/backend/src/server.ts"],
-      "port": 3001
+      "port": 3001,
+      "autoPort": true
     }
   ]
 }

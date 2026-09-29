@@ -36,6 +36,12 @@ npm run test -w apps/backend      # Backend tests (vitest)
 - **Prey positions are server-controlled**: Prey GPS is NEVER routed to other Prey. During the grace period, Prey positions are blocked from reaching Hunters. This is enforced server-side, not client-side.
 - **Configurable prey ping interval**: Default 2 min, min 3s, max 20 min. Hunters emit continuously.
 
+## Spec
+
+- `SPEC.md` is the source of truth for features, rules, and architecture.
+- When adding, removing, or modifying a feature, always update `SPEC.md` accordingly (rules, EF catalogue, detailed fiches, architecture sections).
+- Before considering a task done, verify that `SPEC.md` reflects the current state of the codebase and vice versa.
+
 ## Conventions
 
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`

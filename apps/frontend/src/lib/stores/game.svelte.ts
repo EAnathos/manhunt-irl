@@ -10,6 +10,7 @@ export const gameStore = $state<{
   gracePeriodActive: boolean;
   outOfZoneWarning: number | null;
   chatMessages: ChatMessage[];
+  unreadChatCount: number;
   positionHistory: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> | null;
 }>({
   game: null,
@@ -20,8 +21,13 @@ export const gameStore = $state<{
   gracePeriodActive: false,
   outOfZoneWarning: null,
   chatMessages: [],
+  unreadChatCount: 0,
   positionHistory: null,
 });
+
+export function resetUnreadChat() {
+  gameStore.unreadChatCount = 0;
+}
 
 export function initGameListeners() {
   return onWsMessage((msg: WSServerMessage) => {
@@ -130,6 +136,7 @@ export function initGameListeners() {
 
       case 'chat_message':
         gameStore.chatMessages = [...gameStore.chatMessages, msg.message];
+        gameStore.unreadChatCount++;
         break;
 
       case 'chat_history':

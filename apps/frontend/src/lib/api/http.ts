@@ -7,7 +7,7 @@ import type {
   RuleSection,
 } from '@manhunt/types';
 
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const BASE = import.meta.env.VITE_API_URL ?? '';
 
 async function post<T>(path: string, body: object): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
