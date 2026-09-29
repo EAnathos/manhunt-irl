@@ -243,6 +243,16 @@ h2 {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.7; }
 }
+.zone-warning.zone-critical {
+  background: rgba(255, 68, 68, 0.5);
+  border: 2px solid var(--accent);
+  font-size: 1rem;
+  animation: pulse-critical 0.6s ease-in-out infinite;
+}
+@keyframes pulse-critical {
+  0%, 100% { opacity: 1; transform: translateX(-50%) scale(1); }
+  50% { opacity: 0.8; transform: translateX(-50%) scale(1.03); }
+}
 
 .elim-overlay {
   position: fixed;
@@ -360,4 +370,43 @@ h2 {
   align-items: center;
   padding: 6px 0;
   font-size: 0.9rem;
+}
+
+/* ── Music controls ── */
+
+.music-toggle {
+  position: fixed;
+  top: 16px;
+  right: 72px;
+  z-index: 80;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+.music-toggle:active {
+  background: var(--surface-hover);
+}
+
+.volume-control {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 80;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+.volume-control input[type="range"] {
+  width: 100px;
+  height: 4px;
 }

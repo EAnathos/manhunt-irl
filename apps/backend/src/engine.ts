@@ -11,6 +11,7 @@ interface GameTimers {
   hunterBroadcastInterval?: ReturnType<typeof setInterval>;
   gameEndTimeout?: ReturnType<typeof setTimeout>;
   outOfZoneChecks?: ReturnType<typeof setInterval>;
+  criticalPreyBroadcast?: ReturnType<typeof setInterval>;
   purgeTimeout?: ReturnType<typeof setTimeout>;
 }
 
@@ -18,7 +19,8 @@ const timers = new Map<string, GameTimers>();
 const outOfZoneTimestamps = new Map<string, number>();
 const ELIMINATION_TIMEOUT_MS = 60_000;
 const RECONNECT_WINDOW_MS = 120_000;
-const OUT_OF_ZONE_LIMIT_MS = 15_000;
+const OUT_OF_ZONE_WARNING_MS = 15_000;
+const OUT_OF_ZONE_CRITICAL_MS = 30_000;
 const PURGE_DELAY_MS = 5 * 60_000;
 
 function getTimers(code: string): GameTimers {
@@ -38,6 +40,7 @@ function clearGameTimers(code: string) {
   if (t.hunterBroadcastInterval) clearInterval(t.hunterBroadcastInterval);
   if (t.gameEndTimeout) clearTimeout(t.gameEndTimeout);
   if (t.outOfZoneChecks) clearInterval(t.outOfZoneChecks);
+  if (t.criticalPreyBroadcast) clearInterval(t.criticalPreyBroadcast);
   timers.delete(code);
 }
 
@@ -135,9 +138,12 @@ function isInGracePeriod(game: Game): boolean {
   return Date.now() - game.startedAt < game.gracePeriod * 1000;
 }
 
+const criticalBroadcastActive = new Set<string>();
+
 function checkOutOfZone(game: Game) {
   if (game.status !== 'EN_COURS' || !game.zone) return;
   const now = Date.now();
+  const t = getTimers(game.code);
 
   for (const p of Object.values(game.players)) {
     if (p.role !== 'PROIE' || p.status !== 'LIBRE' || !p.position) continue;
@@ -149,25 +155,57 @@ function checkOutOfZone(game: Game) {
       const since = outOfZoneTimestamps.get(key);
       if (!since) {
         outOfZoneTimestamps.set(key, now);
-        sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: 15 });
+        sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: 30, phase: 'warning' });
       } else {
         const elapsed = now - since;
-        if (elapsed >= OUT_OF_ZONE_LIMIT_MS) {
+        if (elapsed >= OUT_OF_ZONE_CRITICAL_MS) {
           p.status = 'ELIMINE';
           outOfZoneTimestamps.delete(key);
+          criticalBroadcastActive.delete(key);
+          stopCriticalBroadcastIfDone(game);
           broadcastToAll(game, {
             type: 'player_eliminated',
             sessionId: p.sessionId,
             pseudo: p.pseudo,
           });
           checkAllPreyEliminated(game);
+        } else if (elapsed >= OUT_OF_ZONE_WARNING_MS) {
+          const remaining = Math.ceil((OUT_OF_ZONE_CRITICAL_MS - elapsed) / 1000);
+          sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: remaining, phase: 'critical' });
+          if (!criticalBroadcastActive.has(key)) {
+            criticalBroadcastActive.add(key);
+            startCriticalPreyBroadcast(game, t);
+          }
         } else {
-          const remaining = Math.ceil((OUT_OF_ZONE_LIMIT_MS - elapsed) / 1000);
-          sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: remaining });
+          const remaining = Math.ceil((OUT_OF_ZONE_CRITICAL_MS - elapsed) / 1000);
+          sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: remaining, phase: 'warning' });
         }
       }
     } else {
-      outOfZoneTimestamps.delete(key);
+      if (outOfZoneTimestamps.has(key)) {
+        outOfZoneTimestamps.delete(key);
+        criticalBroadcastActive.delete(key);
+        stopCriticalBroadcastIfDone(game);
+        sendToPlayer(p.sessionId, { type: 'out_of_zone_warning', secondsRemaining: 0, phase: 'warning' });
+      }
+    }
+  }
+}
+
+function startCriticalPreyBroadcast(game: Game, t: GameTimers) {
+  if (t.criticalPreyBroadcast) return;
+  t.criticalPreyBroadcast = setInterval(() => {
+    broadcastPreyPositions(game);
+  }, 1_000);
+}
+
+function stopCriticalBroadcastIfDone(game: Game) {
+  const hasAnyCritical = [...criticalBroadcastActive].some((k) => k.startsWith(game.code + ':'));
+  if (!hasAnyCritical) {
+    const t = getTimers(game.code);
+    if (t.criticalPreyBroadcast) {
+      clearInterval(t.criticalPreyBroadcast);
+      t.criticalPreyBroadcast = undefined;
     }
   }
 }

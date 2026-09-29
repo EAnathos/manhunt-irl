@@ -112,7 +112,7 @@ classDiagram
 | RG-08 | Visibilité des Chasseurs entre eux | La position GPS des Chasseurs est visible par tous les autres Chasseurs en temps réel continu (pas d'intervalle configuré). |
 | RG-09 | Confirmation d'élimination | Une Élimination doit être confirmée par la Proie pour être effective. Sans réponse dans un délai de 60 s, l'Hôte arbitre. |
 | RG-10 | Fin de partie automatique | La Partie se termine automatiquement si toutes les Proies sont ÉLIMINÉES ou si le chronomètre atteint 0. |
-| RG-11 | Hors zone | Une Proie qui sort de la Zone de jeu reçoit une alerte. Si hors zone pendant plus de 15 s consécutives, elle est automatiquement éliminée et déclarée victorieuse. |
+| RG-11 | Hors zone | Une Proie qui sort de la Zone de jeu reçoit une alerte avec vibrations et notifications toutes les 2 s. Deux phases : **Avertissement** (0-15 s) — la Proie doit revenir ; **Critique** (15-30 s) — la position de la Proie est publiée aux Chasseurs chaque seconde. Après 30 s hors zone, la Proie est automatiquement éliminée. |
 | RG-12 | Reconnexion | Un Joueur déconnecté pendant moins de 120 s peut se reconnecter à la Partie en cours sans pénalité. Au-delà, il est considéré DÉCONNECTÉ et ne participe plus activement. |
 | RG-13 | Fréquence de ping GPS | La position des Proies est transmise au serveur à une fréquence configurable par l'Hôte avant le démarrage (valeur par défaut : 2 min, minimum : 3 s, maximum : 20 min). La position des Chasseurs est transmise en continu sans intervalle configurable. |
 | RG-14 | Historique de positions | Les positions sont conservées en mémoire RAM pendant la durée de la Partie uniquement. Elles sont purgées 5 minutes après la fin de la Partie (pas de persistance disque). |
@@ -144,7 +144,7 @@ classDiagram
 | EF-11 | Arbitrer une élimination contestée (Hôte) | SHOULD | RG-09 |
 | EF-12 | Déclencher la fin de partie automatiquement | MUST | RG-10 |
 | EF-13 | Afficher le résumé de partie | MUST | — |
-| EF-14 | Alerter une Proie hors zone | SHOULD | RG-11 |
+| EF-14 | Alerter une Proie hors zone (vibrations, notifications, pings accélérés) | MUST | RG-11 |
 | EF-15 | Gérer la reconnexion | SHOULD | RG-12 |
 | EF-16 | Dissoudre / quitter la partie (Hôte) | MUST | — |
 | EF-17 | Afficher la section Règles depuis un fichier JSON | MUST | RG-15 |

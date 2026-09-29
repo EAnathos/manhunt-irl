@@ -27,6 +27,39 @@
   let objectiveTitle = $state('');
   let objectiveTarget = $state<'proies' | 'chasseurs' | 'tous'>('tous');
 
+  let durationInput = $state('30min');
+  let graceInput = $state('1min');
+  let pingInput = $state('2min');
+  let wakeLock: WakeLockSentinel | null = null;
+  let audioCtx: AudioContext | null = null;
+  let masterGain: GainNode | null = null;
+  let musicPlaying = $state(false);
+  let musicVolume = $state(0.3);
+
+  function parseDuration(input: string): number | null {
+    const match = input.trim().match(/^(\d+(?:[.,]\d+)?)\s*(s|sec|min|m|h|heure|heures?)$/i);
+    if (!match) return null;
+    const value = parseFloat(match[1].replace(',', '.'));
+    const unit = match[2].toLowerCase();
+    if (unit === 's' || unit === 'sec') return Math.round(value);
+    if (unit === 'm' || unit === 'min') return Math.round(value * 60);
+    if (unit.startsWith('h')) return Math.round(value * 3600);
+    return null;
+  }
+
+  function formatDurationInput(seconds: number): string {
+    if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600}h`;
+    if (seconds >= 60) return `${Math.round(seconds / 60)}min`;
+    return `${seconds}s`;
+  }
+
+  function applyConfig(field: 'maxDuration' | 'gracePeriod' | 'preyPingInterval', input: string) {
+    const seconds = parseDuration(input);
+    if (seconds && seconds > 0) {
+      sendWs({ type: 'update_config', [field]: seconds });
+    }
+  }
+
   let graceTimer = $state('');
 
   let isHost = $derived(sessionStore.data?.sessionId === gameStore.game?.hostSessionId);
@@ -61,6 +94,16 @@
     }
 
     timerInterval = setInterval(updateTimer, 1000);
+
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
+    }
+
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
   });
 
   onDestroy(() => {
@@ -68,7 +111,183 @@
     if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
     if (unsub) unsub();
     if (timerInterval) clearInterval(timerInterval);
+    wakeLock?.release();
+    stopMusic();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
   });
+
+  function startMusic() {
+    if (audioCtx) return;
+    try {
+      const ctx = new AudioContext();
+      audioCtx = ctx;
+      const master = ctx.createGain();
+      master.gain.value = musicVolume;
+      master.connect(ctx.destination);
+      masterGain = master;
+
+      // Deep bass drone (D1 ~36.7Hz)
+      const bass = ctx.createOscillator();
+      bass.type = 'sawtooth';
+      bass.frequency.value = 36.7;
+      const bassGain = ctx.createGain();
+      bassGain.gain.value = 0.15;
+      const bassFilter = ctx.createBiquadFilter();
+      bassFilter.type = 'lowpass';
+      bassFilter.frequency.value = 120;
+      bassFilter.Q.value = 2;
+      bass.connect(bassFilter);
+      bassFilter.connect(bassGain);
+      bassGain.connect(master);
+      bass.start();
+
+      // Sub-bass pulse (slow LFO on volume)
+      const subLfo = ctx.createOscillator();
+      subLfo.frequency.value = 0.08;
+      const subLfoGain = ctx.createGain();
+      subLfoGain.gain.value = 0.06;
+      subLfo.connect(subLfoGain);
+      subLfoGain.connect(bassGain.gain);
+      subLfo.start();
+
+      // Mid drone (D2 ~73.4Hz + fifth A2 ~110Hz)
+      const mid1 = ctx.createOscillator();
+      mid1.type = 'triangle';
+      mid1.frequency.value = 73.4;
+      const mid1Gain = ctx.createGain();
+      mid1Gain.gain.value = 0.06;
+      mid1.connect(mid1Gain);
+      mid1Gain.connect(master);
+      mid1.start();
+
+      const mid2 = ctx.createOscillator();
+      mid2.type = 'sine';
+      mid2.frequency.value = 110;
+      const mid2Gain = ctx.createGain();
+      mid2Gain.gain.value = 0.04;
+      const mid2Filter = ctx.createBiquadFilter();
+      mid2Filter.type = 'bandpass';
+      mid2Filter.frequency.value = 110;
+      mid2Filter.Q.value = 5;
+      mid2.connect(mid2Filter);
+      mid2Filter.connect(mid2Gain);
+      mid2Gain.connect(master);
+      mid2.start();
+
+      // Slow detuning for unease
+      mid1.frequency.setValueAtTime(73.4, ctx.currentTime);
+      mid1.frequency.linearRampToValueAtTime(74.2, ctx.currentTime + 8);
+      mid1.frequency.linearRampToValueAtTime(72.8, ctx.currentTime + 16);
+      mid1.frequency.linearRampToValueAtTime(73.4, ctx.currentTime + 24);
+      setInterval(() => {
+        if (ctx.state === 'closed') return;
+        const t = ctx.currentTime;
+        mid1.frequency.setValueAtTime(mid1.frequency.value, t);
+        mid1.frequency.linearRampToValueAtTime(73.4 + (Math.random() - 0.5) * 2, t + 8);
+      }, 8000);
+
+      // High tension — filtered noise
+      const noiseSize = ctx.sampleRate * 2;
+      const noiseBuffer = ctx.createBuffer(1, noiseSize, ctx.sampleRate);
+      const noiseData = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseSize; i++) noiseData[i] = Math.random() * 2 - 1;
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+      noise.loop = true;
+      const noiseFilter = ctx.createBiquadFilter();
+      noiseFilter.type = 'bandpass';
+      noiseFilter.frequency.value = 800;
+      noiseFilter.Q.value = 15;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.value = 0.015;
+      noise.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(master);
+      noise.start();
+
+      // Sweep the noise filter for movement
+      setInterval(() => {
+        if (ctx.state === 'closed') return;
+        const t = ctx.currentTime;
+        const target = 400 + Math.random() * 1200;
+        noiseFilter.frequency.setValueAtTime(noiseFilter.frequency.value, t);
+        noiseFilter.frequency.exponentialRampToValueAtTime(target, t + 4);
+      }, 4000);
+
+      // Random tension stingers
+      setInterval(() => {
+        if (ctx.state === 'closed' || Math.random() > 0.3) return;
+        const t = ctx.currentTime;
+        const stinger = ctx.createOscillator();
+        stinger.type = 'sine';
+        const freq = 200 + Math.random() * 600;
+        stinger.frequency.value = freq;
+        const sGain = ctx.createGain();
+        sGain.gain.setValueAtTime(0, t);
+        sGain.gain.linearRampToValueAtTime(0.03, t + 0.5);
+        sGain.gain.exponentialRampToValueAtTime(0.001, t + 3);
+        stinger.connect(sGain);
+        sGain.connect(master);
+        stinger.start(t);
+        stinger.stop(t + 3);
+      }, 5000);
+
+      // Heartbeat pulse
+      setInterval(() => {
+        if (ctx.state === 'closed') return;
+        const t = ctx.currentTime;
+        for (let i = 0; i < 2; i++) {
+          const beat = ctx.createOscillator();
+          beat.type = 'sine';
+          beat.frequency.value = 55;
+          const bGain = ctx.createGain();
+          bGain.gain.setValueAtTime(0, t + i * 0.25);
+          bGain.gain.linearRampToValueAtTime(0.08, t + i * 0.25 + 0.04);
+          bGain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.25 + 0.3);
+          beat.connect(bGain);
+          bGain.connect(master);
+          beat.start(t + i * 0.25);
+          beat.stop(t + i * 0.25 + 0.4);
+        }
+      }, 8000);
+
+      musicPlaying = true;
+    } catch { /* Web Audio not supported */ }
+  }
+
+  function stopMusic() {
+    if (audioCtx) {
+      audioCtx.close().catch(() => {});
+      audioCtx = null;
+      masterGain = null;
+    }
+    musicPlaying = false;
+  }
+
+  function toggleMusic() {
+    if (musicPlaying) stopMusic();
+    else startMusic();
+  }
+
+  function updateMusicVolume(v: number) {
+    musicVolume = v;
+    if (masterGain) masterGain.gain.value = v;
+  }
+
+  function onVisibilityChange() {
+    if (document.visibilityState === 'visible') {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
+      }
+      if (myPosition) {
+        sendWs({
+          type: 'position',
+          latitude: myPosition.latitude,
+          longitude: myPosition.longitude,
+        });
+      }
+    }
+  }
 
   function updateTimer() {
     const g = gameStore.game;
@@ -105,7 +324,7 @@
     if (shuffling) return;
     shuffling = true;
     const players = gameStore.game?.players ?? [];
-    const preyCount = Math.max(1, Math.floor(players.length / 3));
+    const preyCount = Math.max(1, Math.floor(players.length / 2));
     sendWs({ type: 'randomize_roles', preyCount });
     setTimeout(() => { shuffling = false; }, 600);
   }
@@ -149,17 +368,22 @@
     });
   }
 
+  let zoneDebounce: ReturnType<typeof setTimeout> | null = null;
+
   function updateZoneRadius(r: number) {
     zoneRadius = r;
     if (gameStore.game?.zone?.centre) {
-      sendWs({
-        type: 'update_config',
-        zone: {
-          type: 'cercle',
-          centre: gameStore.game.zone.centre,
-          rayon: r,
-        },
-      });
+      if (zoneDebounce) clearTimeout(zoneDebounce);
+      zoneDebounce = setTimeout(() => {
+        sendWs({
+          type: 'update_config',
+          zone: {
+            type: 'cercle',
+            centre: gameStore.game!.zone!.centre,
+            rayon: r,
+          },
+        });
+      }, 150);
     }
   }
 
@@ -173,6 +397,14 @@
 
   $effect(() => {
     if (chatOpen) resetUnreadChat();
+  });
+
+  $effect(() => {
+    const g = gameStore.game;
+    if (!g) return;
+    durationInput = formatDurationInput(g.maxDuration);
+    graceInput = formatDurationInput(g.gracePeriod);
+    pingInput = formatDurationInput(g.preyPingInterval);
   });
 
   function addObjective() {
@@ -270,84 +502,63 @@
         <div style="display: flex; flex-direction: column; gap: 0.75rem;">
           <label>
             <span style="color: var(--text-muted); font-size: 0.85rem;">Durée de la partie</span>
-            <select onchange={(e) => sendWs({ type: 'update_config', maxDuration: Number((e.target as HTMLSelectElement).value) })}>
-              <option value="900">15 min</option>
-              <option value="1800" selected>30 min</option>
-              <option value="2700">45 min</option>
-              <option value="3600">1 heure</option>
-              <option value="5400">1h30</option>
-              <option value="7200">2 heures</option>
-            </select>
+            <input type="text" bind:value={durationInput} placeholder="ex: 30min, 1h, 45s"
+              onblur={() => applyConfig('maxDuration', durationInput)}
+              onkeydown={(e) => { if (e.key === 'Enter') applyConfig('maxDuration', durationInput); }}
+              style="font-size: 0.9rem;" />
           </label>
           <label>
             <span style="color: var(--text-muted); font-size: 0.85rem;">Délai de grâce</span>
-            <select onchange={(e) => sendWs({ type: 'update_config', gracePeriod: Number((e.target as HTMLSelectElement).value) })}>
-              <option value="30">30 s</option>
-              <option value="60" selected>1 min</option>
-              <option value="120">2 min</option>
-              <option value="180">3 min</option>
-              <option value="300">5 min</option>
-            </select>
+            <input type="text" bind:value={graceInput} placeholder="ex: 1min, 30s, 5min"
+              onblur={() => applyConfig('gracePeriod', graceInput)}
+              onkeydown={(e) => { if (e.key === 'Enter') applyConfig('gracePeriod', graceInput); }}
+              style="font-size: 0.9rem;" />
           </label>
           <label>
             <span style="color: var(--text-muted); font-size: 0.85rem;">Intervalle ping Proies</span>
-            <select onchange={(e) => sendWs({ type: 'update_config', preyPingInterval: Number((e.target as HTMLSelectElement).value) })}>
-              <option value="3">3 s</option>
-              <option value="10">10 s</option>
-              <option value="30">30 s</option>
-              <option value="60">1 min</option>
-              <option value="120" selected>2 min</option>
-              <option value="300">5 min</option>
-              <option value="600">10 min</option>
-              <option value="1200">20 min</option>
-            </select>
+            <input type="text" bind:value={pingInput} placeholder="ex: 2min, 30s, 10min"
+              onblur={() => applyConfig('preyPingInterval', pingInput)}
+              onkeydown={(e) => { if (e.key === 'Enter') applyConfig('preyPingInterval', pingInput); }}
+              style="font-size: 0.9rem;" />
           </label>
         </div>
       </div>
 
       <div class="card">
         <h2>Zone de jeu</h2>
+        <GameMap
+          hunterPositions={[]}
+          preyPositions={[]}
+          {myPosition}
+          mySessionId={sessionStore.data?.sessionId ?? ''}
+          myRole={'CHASSEUR'}
+          zone={game.zone}
+          gracePeriodActive={false}
+        />
         {#if game.zone?.centre}
-          <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">
-            Centre : {game.zone.centre.latitude.toFixed(5)}, {game.zone.centre.longitude.toFixed(5)}
-            — Rayon : {game.zone.rayon ?? 0} m
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-            <label>
+          <div style="margin-top: 0.75rem;">
+            <div class="flex-between" style="margin-bottom: 0.5rem;">
               <span style="color: var(--text-muted); font-size: 0.85rem;">Rayon</span>
-              <select value={String(game.zone.rayon ?? 500)} onchange={(e) => updateZoneRadius(Number((e.target as HTMLSelectElement).value))}>
-                <option value="100">100 m</option>
-                <option value="250">250 m</option>
-                <option value="500">500 m</option>
-                <option value="1000">1 km</option>
-                <option value="2000">2 km</option>
-                <option value="5000">5 km</option>
-              </select>
-            </label>
-            <button class="btn-secondary" onclick={clearZone} style="font-size: 0.85rem;">
-              Supprimer la zone
-            </button>
+              <span style="font-weight: 700; font-size: 0.9rem;">{game.zone.rayon ?? 0} m</span>
+            </div>
+            <input type="range" min="50" max="5000" step="50" value={game.zone.rayon ?? 500}
+              oninput={(e) => updateZoneRadius(Number((e.target as HTMLInputElement).value))}
+              style="width: 100%; accent-color: var(--accent);" />
+            <div class="flex-between" style="margin-top: 0.25rem;">
+              <span style="color: var(--text-muted); font-size: 0.7rem;">50 m</span>
+              <span style="color: var(--text-muted); font-size: 0.7rem;">5 km</span>
+            </div>
           </div>
+          <button class="btn-secondary" onclick={clearZone} style="font-size: 0.85rem; margin-top: 0.75rem; width: 100%;">
+            Supprimer la zone
+          </button>
         {:else}
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.75rem 0;">
             Aucune zone définie. Les joueurs peuvent aller où ils veulent.
           </p>
-          <div style="display: flex; flex-direction: column; gap: 0.5rem;">
-            <label>
-              <span style="color: var(--text-muted); font-size: 0.85rem;">Rayon</span>
-              <select bind:value={zoneRadius}>
-                <option value={100}>100 m</option>
-                <option value={250}>250 m</option>
-                <option value={500}>500 m</option>
-                <option value={1000}>1 km</option>
-                <option value={2000}>2 km</option>
-                <option value={5000}>5 km</option>
-              </select>
-            </label>
-            <button class="btn-primary" onclick={setZoneFromPosition} disabled={!myPosition} style="font-size: 0.85rem;">
-              {myPosition ? 'Utiliser ma position comme centre' : 'GPS en cours...'}
-            </button>
-          </div>
+          <button class="btn-primary" onclick={setZoneFromPosition} disabled={!myPosition} style="font-size: 0.85rem; width: 100%;">
+            {myPosition ? 'Définir la zone sur ma position' : 'GPS en cours...'}
+          </button>
         {/if}
       </div>
 
@@ -439,8 +650,12 @@
 
     <!-- Out of zone warning -->
     {#if gameStore.outOfZoneWarning != null}
-      <div class="zone-warning">
-        ⚠ Hors zone ! ({gameStore.outOfZoneWarning}s)
+      <div class="zone-warning" class:zone-critical={gameStore.outOfZoneWarning.phase === 'critical'}>
+        {#if gameStore.outOfZoneWarning.phase === 'critical'}
+          🚨 Position révélée ! Élimination dans {gameStore.outOfZoneWarning.secondsRemaining}s
+        {:else}
+          ⚠ Hors zone ! Retournez dans la zone ({gameStore.outOfZoneWarning.secondsRemaining}s)
+        {/if}
       </div>
     {/if}
 
@@ -464,6 +679,22 @@
             </div>
           {/if}
         </div>
+      </div>
+    {/if}
+
+    <!-- Music toggle -->
+    <button class="music-toggle" onclick={toggleMusic} aria-label={musicPlaying ? 'Couper la musique' : 'Jouer la musique'}>
+      {#if musicPlaying}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg>
+      {:else}
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12A4.5 4.5 0 0 0 14 8.5v2.09L16.41 13l.09-.08zM19 12a7 7 0 0 0-4-6.32v1.98A5 5 0 0 1 17 12l2 0zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25A7 7 0 0 1 14 18.7v2.06A9 9 0 0 0 18.16 19L19.73 21 21 19.73 4.27 3zM12 4l-1.69 1.69L12 7.38V4z"/></svg>
+      {/if}
+    </button>
+    {#if musicPlaying}
+      <div class="volume-control">
+        <input type="range" min="0" max="1" step="0.05" value={musicVolume}
+          oninput={(e) => updateMusicVolume(Number((e.target as HTMLInputElement).value))}
+          style="accent-color: var(--accent);" />
       </div>
     {/if}
 

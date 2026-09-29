@@ -152,7 +152,7 @@ export type WSServerMessage =
   | { type: 'elimination_contested'; eliminationId: string }
   | { type: 'elimination_arbitrated'; eliminationId: string; confirmed: boolean }
   | { type: 'player_eliminated'; sessionId: string; pseudo: string }
-  | { type: 'out_of_zone_warning'; secondsRemaining: number }
+  | { type: 'out_of_zone_warning'; secondsRemaining: number; phase: 'warning' | 'critical' }
   | { type: 'game_over'; reason: 'all_eliminated' | 'time_up'; winners: PlayerSnapshot[] }
   | { type: 'game_dissolved' }
   | { type: 'error'; message: string }
