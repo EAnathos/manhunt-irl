@@ -99,6 +99,10 @@
       navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
     }
 
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
     document.addEventListener('visibilitychange', onVisibilityChange);
   });
 
@@ -646,8 +650,12 @@
 
     <!-- Out of zone warning -->
     {#if gameStore.outOfZoneWarning != null}
-      <div class="zone-warning">
-        ⚠ Hors zone ! ({gameStore.outOfZoneWarning}s)
+      <div class="zone-warning" class:zone-critical={gameStore.outOfZoneWarning.phase === 'critical'}>
+        {#if gameStore.outOfZoneWarning.phase === 'critical'}
+          🚨 Position révélée ! Élimination dans {gameStore.outOfZoneWarning.secondsRemaining}s
+        {:else}
+          ⚠ Hors zone ! Retournez dans la zone ({gameStore.outOfZoneWarning.secondsRemaining}s)
+        {/if}
       </div>
     {/if}
 

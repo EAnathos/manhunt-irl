@@ -9,7 +9,7 @@ export const gameStore = $state<{
   pendingElimination: (Elimination & { hunterPseudo: string; preyPseudo: string }) | null;
   gameOver: { reason: string; winners: PlayerSnapshot[] } | null;
   gracePeriodActive: boolean;
-  outOfZoneWarning: number | null;
+  outOfZoneWarning: { secondsRemaining: number; phase: 'warning' | 'critical' } | null;
   chatMessages: ChatMessage[];
   unreadChatCount: number;
   positionHistory: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> | null;
@@ -121,7 +121,21 @@ export function initGameListeners() {
         break;
 
       case 'out_of_zone_warning':
-        gameStore.outOfZoneWarning = msg.secondsRemaining;
+        if (msg.secondsRemaining === 0) {
+          gameStore.outOfZoneWarning = null;
+        } else {
+          gameStore.outOfZoneWarning = { secondsRemaining: msg.secondsRemaining, phase: msg.phase };
+          if ('vibrate' in navigator) {
+            navigator.vibrate(msg.phase === 'critical' ? [200, 100, 200] : [150]);
+          }
+          if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification(
+              msg.phase === 'critical'
+                ? `CRITIQUE: Position révélée ! ${msg.secondsRemaining}s avant élimination`
+                : `Hors zone ! ${msg.secondsRemaining}s pour revenir`,
+            );
+          }
+        }
         break;
 
       case 'game_over':
