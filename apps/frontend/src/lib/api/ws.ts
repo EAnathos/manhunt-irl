@@ -1,6 +1,6 @@
 import type { WSClientMessage, WSServerMessage } from '@manhunt/types';
 
-const WS_BASE = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
+const WS_BASE = import.meta.env.VITE_WS_URL ?? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
 
 let socket: WebSocket | null = null;
 let listeners: Array<(msg: WSServerMessage) => void> = [];
