@@ -31,8 +31,7 @@
   let graceInput = $state('1min');
   let pingInput = $state('2min');
   let wakeLock: WakeLockSentinel | null = null;
-  let audioCtx: AudioContext | null = null;
-  let masterGain: GainNode | null = null;
+  let musicAudio: HTMLAudioElement | null = null;
   let musicPlaying = $state(false);
   let musicVolume = $state(0.3);
 
@@ -117,149 +116,20 @@
   });
 
   function startMusic() {
-    if (audioCtx) return;
-    try {
-      const ctx = new AudioContext();
-      audioCtx = ctx;
-      const master = ctx.createGain();
-      master.gain.value = musicVolume;
-      master.connect(ctx.destination);
-      masterGain = master;
-
-      // Deep bass drone (D1 ~36.7Hz)
-      const bass = ctx.createOscillator();
-      bass.type = 'sawtooth';
-      bass.frequency.value = 36.7;
-      const bassGain = ctx.createGain();
-      bassGain.gain.value = 0.15;
-      const bassFilter = ctx.createBiquadFilter();
-      bassFilter.type = 'lowpass';
-      bassFilter.frequency.value = 120;
-      bassFilter.Q.value = 2;
-      bass.connect(bassFilter);
-      bassFilter.connect(bassGain);
-      bassGain.connect(master);
-      bass.start();
-
-      // Sub-bass pulse (slow LFO on volume)
-      const subLfo = ctx.createOscillator();
-      subLfo.frequency.value = 0.08;
-      const subLfoGain = ctx.createGain();
-      subLfoGain.gain.value = 0.06;
-      subLfo.connect(subLfoGain);
-      subLfoGain.connect(bassGain.gain);
-      subLfo.start();
-
-      // Mid drone (D2 ~73.4Hz + fifth A2 ~110Hz)
-      const mid1 = ctx.createOscillator();
-      mid1.type = 'triangle';
-      mid1.frequency.value = 73.4;
-      const mid1Gain = ctx.createGain();
-      mid1Gain.gain.value = 0.06;
-      mid1.connect(mid1Gain);
-      mid1Gain.connect(master);
-      mid1.start();
-
-      const mid2 = ctx.createOscillator();
-      mid2.type = 'sine';
-      mid2.frequency.value = 110;
-      const mid2Gain = ctx.createGain();
-      mid2Gain.gain.value = 0.04;
-      const mid2Filter = ctx.createBiquadFilter();
-      mid2Filter.type = 'bandpass';
-      mid2Filter.frequency.value = 110;
-      mid2Filter.Q.value = 5;
-      mid2.connect(mid2Filter);
-      mid2Filter.connect(mid2Gain);
-      mid2Gain.connect(master);
-      mid2.start();
-
-      // Slow detuning for unease
-      mid1.frequency.setValueAtTime(73.4, ctx.currentTime);
-      mid1.frequency.linearRampToValueAtTime(74.2, ctx.currentTime + 8);
-      mid1.frequency.linearRampToValueAtTime(72.8, ctx.currentTime + 16);
-      mid1.frequency.linearRampToValueAtTime(73.4, ctx.currentTime + 24);
-      setInterval(() => {
-        if (ctx.state === 'closed') return;
-        const t = ctx.currentTime;
-        mid1.frequency.setValueAtTime(mid1.frequency.value, t);
-        mid1.frequency.linearRampToValueAtTime(73.4 + (Math.random() - 0.5) * 2, t + 8);
-      }, 8000);
-
-      // High tension — filtered noise
-      const noiseSize = ctx.sampleRate * 2;
-      const noiseBuffer = ctx.createBuffer(1, noiseSize, ctx.sampleRate);
-      const noiseData = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < noiseSize; i++) noiseData[i] = Math.random() * 2 - 1;
-      const noise = ctx.createBufferSource();
-      noise.buffer = noiseBuffer;
-      noise.loop = true;
-      const noiseFilter = ctx.createBiquadFilter();
-      noiseFilter.type = 'bandpass';
-      noiseFilter.frequency.value = 800;
-      noiseFilter.Q.value = 15;
-      const noiseGain = ctx.createGain();
-      noiseGain.gain.value = 0.015;
-      noise.connect(noiseFilter);
-      noiseFilter.connect(noiseGain);
-      noiseGain.connect(master);
-      noise.start();
-
-      // Sweep the noise filter for movement
-      setInterval(() => {
-        if (ctx.state === 'closed') return;
-        const t = ctx.currentTime;
-        const target = 400 + Math.random() * 1200;
-        noiseFilter.frequency.setValueAtTime(noiseFilter.frequency.value, t);
-        noiseFilter.frequency.exponentialRampToValueAtTime(target, t + 4);
-      }, 4000);
-
-      // Random tension stingers
-      setInterval(() => {
-        if (ctx.state === 'closed' || Math.random() > 0.3) return;
-        const t = ctx.currentTime;
-        const stinger = ctx.createOscillator();
-        stinger.type = 'sine';
-        const freq = 200 + Math.random() * 600;
-        stinger.frequency.value = freq;
-        const sGain = ctx.createGain();
-        sGain.gain.setValueAtTime(0, t);
-        sGain.gain.linearRampToValueAtTime(0.03, t + 0.5);
-        sGain.gain.exponentialRampToValueAtTime(0.001, t + 3);
-        stinger.connect(sGain);
-        sGain.connect(master);
-        stinger.start(t);
-        stinger.stop(t + 3);
-      }, 5000);
-
-      // Heartbeat pulse
-      setInterval(() => {
-        if (ctx.state === 'closed') return;
-        const t = ctx.currentTime;
-        for (let i = 0; i < 2; i++) {
-          const beat = ctx.createOscillator();
-          beat.type = 'sine';
-          beat.frequency.value = 55;
-          const bGain = ctx.createGain();
-          bGain.gain.setValueAtTime(0, t + i * 0.25);
-          bGain.gain.linearRampToValueAtTime(0.08, t + i * 0.25 + 0.04);
-          bGain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.25 + 0.3);
-          beat.connect(bGain);
-          bGain.connect(master);
-          beat.start(t + i * 0.25);
-          beat.stop(t + i * 0.25 + 0.4);
-        }
-      }, 8000);
-
-      musicPlaying = true;
-    } catch { /* Web Audio not supported */ }
+    if (musicAudio) return;
+    const audio = new Audio('/hunted.mp3');
+    audio.loop = true;
+    audio.volume = musicVolume;
+    audio.play().catch(() => {});
+    musicAudio = audio;
+    musicPlaying = true;
   }
 
   function stopMusic() {
-    if (audioCtx) {
-      audioCtx.close().catch(() => {});
-      audioCtx = null;
-      masterGain = null;
+    if (musicAudio) {
+      musicAudio.pause();
+      musicAudio.src = '';
+      musicAudio = null;
     }
     musicPlaying = false;
   }
@@ -271,7 +141,7 @@
 
   function updateMusicVolume(v: number) {
     musicVolume = v;
-    if (masterGain) masterGain.gain.value = v;
+    if (musicAudio) musicAudio.volume = v;
   }
 
   function onVisibilityChange() {
