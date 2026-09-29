@@ -257,9 +257,6 @@
     }
   }
 
-  function clearZone() {
-    sendWs({ type: 'update_config', zone: undefined });
-  }
 
   function sendChat(text: string) {
     sendWs({ type: 'chat_message', channel: activeChannel, text });
@@ -419,9 +416,6 @@
               <span style="color: var(--text-muted); font-size: 0.7rem;">5 km</span>
             </div>
           </div>
-          <button class="btn-secondary" onclick={clearZone} style="font-size: 0.85rem; margin-top: 0.75rem; width: 100%;">
-            Supprimer la zone
-          </button>
         {:else}
           <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.75rem 0;">
             Aucune zone définie. Les joueurs peuvent aller où ils veulent.
