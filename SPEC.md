@@ -286,7 +286,8 @@ classDiagram
 | --- | --- | --- |
 | Frontend | SvelteKit (PWA) | Bundle léger, réactivité native adaptée au temps réel, cold load rapide sur mobile |
 | Carte | Leaflet + `leaflet-rotate` | OpenStreetMap ; `leaflet-rotate` ajoute la rotation de carte (mode Boussole, RG-25) |
-| Service Worker | `src/service-worker.ts` | Rend l'app installable et met en cache le shell applicatif ; API et WebSocket jamais mis en cache |
+| Service Worker | `src/service-worker.ts` | Rend l'app installable et met en cache le shell applicatif (un cache par version, les anciens sont supprimés à l'activation) ; navigations en réseau d'abord sans cache HTTP ; API et WebSocket jamais mis en cache |
+| Mises à jour | `version.pollInterval` (60 s) + `UpdateBanner.svelte` | Détecte un nouveau déploiement (sondage de `/_app/version.json`, et au retour au premier plan) et affiche « Nouvelle version disponible » (masqué pendant une partie en cours). « Mettre à jour » vide tous les caches, met à jour le Service Worker (`updateViaCache: 'none'`) et recharge. Côté Nginx : `index.html`, `service-worker.js`, `manifest.json`, `version.json` en `no-cache` ; seul `/_app/immutable/` est en cache long |
 | Backend | Fastify (Node.js / TypeScript) | Performant, WebSocket natif via `@fastify/websocket`, stack déjà maîtrisée |
 | Temps réel | WebSockets (ws) | Bidirectionnel obligatoire : les Chasseurs émettent et reçoivent en continu |
 | Persistance | Aucune BDD :  état en mémoire (RAM) | Données éphémères (durée max d'une partie) ; zéro dépendance externe |
