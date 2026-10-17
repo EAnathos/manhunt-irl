@@ -34,10 +34,11 @@ sw.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigations: network first, fall back to the cached SPA shell when offline.
+  // Navigations: network first, bypassing the HTTP cache so a refresh always gets
+  // the latest index.html (and thus the latest hashed bundles).
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(async () => (await caches.match('/')) ?? (await caches.match('/index.html')) ?? Response.error()),
+      fetch(request.url, { cache: 'no-cache', credentials: 'same-origin' }).catch(async () => (await caches.match('/')) ?? (await caches.match('/index.html')) ?? Response.error()),
     );
   }
 });

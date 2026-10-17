@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   let { children } = $props();
 
   // Safety net: never leave .reveal content hidden if the splash script didn't run.
@@ -48,3 +49,5 @@
 </svelte:head>
 
 {@render children()}
+
+<UpdateBanner />
