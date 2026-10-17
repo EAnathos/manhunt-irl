@@ -9,7 +9,8 @@ import type {
 } from '@manhunt/types';
 import { games, generateCode, generateSessionId } from '../store.js';
 import { gameSnapshot } from '../snapshot.js';
-import { getWs } from '../broadcast.js';
+import { getWs, broadcastToAll } from '../broadcast.js';
+import { playerSnapshot } from '../snapshot.js';
 
 const MAX_PLAYERS = 20;
 
@@ -117,6 +118,8 @@ export async function gameRoutes(app: FastifyInstance) {
     };
 
     game.players[sessionId] = player;
+    // Notify the lobby right away, without waiting for the newcomer's WebSocket.
+    broadcastToAll(game, { type: 'player_joined', player: playerSnapshot(player) });
 
     const response: JoinGameResponse = {
       sessionId,

@@ -2,7 +2,7 @@ import { v4 as uuid } from 'uuid';
 import type { FastifyInstance } from 'fastify';
 import type { WSClientMessage, Role, Zone, Objective } from '@manhunt/types';
 import { games } from '../store.js';
-import { setWs, removeWs } from '../broadcast.js';
+import { setWs, removeWs, getWs } from '../broadcast.js';
 import { broadcastToAll, sendToPlayer } from '../broadcast.js';
 import { gameSnapshot, playerSnapshot } from '../snapshot.js';
 import {
@@ -73,7 +73,9 @@ export async function wsRoutes(app: FastifyInstance) {
     });
 
     socket.on('close', () => {
-      removeWs(sessionId);
+      // A stale socket closing after a reconnect must not disconnect the new one.
+      if (getWs(sessionId) !== socket) return;
+      removeWs(sessionId, socket);
       handleDisconnect(game, sessionId);
     });
   });
@@ -249,6 +251,34 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
 
     case 'voice_end': {
       handleVoice(game, sessionId, msg.channel, { type: 'voice_end', sessionId });
+      break;
+    }
+
+    case 'ping': {
+      sendToPlayer(sessionId, { type: 'pong' });
+      break;
+    }
+
+    case 'request_state': {
+      sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game), serverNow: Date.now() });
+      sendPingStatus(game, sessionId);
+      break;
+    }
+
+    case 'kick_player': {
+      if (sessionId !== game.hostSessionId) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Only the host can kick players' });
+        return;
+      }
+      if (game.status !== 'LOBBY') return;
+      const targetId = msg.targetSessionId;
+      if (targetId === game.hostSessionId || !game.players[targetId]) return;
+      delete game.players[targetId];
+      sendToPlayer(targetId, { type: 'kicked' });
+      const targetWs = getWs(targetId);
+      removeWs(targetId);
+      targetWs?.close();
+      broadcastToAll(game, { type: 'player_removed', sessionId: targetId });
       break;
     }
 

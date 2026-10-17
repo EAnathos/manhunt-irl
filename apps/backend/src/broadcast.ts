@@ -9,7 +9,9 @@ export function setWs(sessionId: string, ws: WebSocket) {
   wsConnections.set(sessionId, { ws });
 }
 
-export function removeWs(sessionId: string) {
+/** Only removes the mapping if it still points to this socket (a reconnect may have replaced it). */
+export function removeWs(sessionId: string, ws?: WebSocket) {
+  if (ws && wsConnections.get(sessionId)?.ws !== ws) return;
   wsConnections.delete(sessionId);
 }
 

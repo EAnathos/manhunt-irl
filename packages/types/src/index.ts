@@ -152,7 +152,12 @@ export type WSClientMessage =
   | { type: 'complete_objective'; objectiveId: string }
   /** Push-to-talk audio: 16 kHz mono G.711 µ-law, base64 */
   | { type: 'voice_chunk'; channel: ChatChannel; seq: number; data: string }
-  | { type: 'voice_end'; channel: ChatChannel };
+  | { type: 'voice_end'; channel: ChatChannel }
+  | { type: 'kick_player'; targetSessionId: string }
+  /** Ask for a fresh game_state (e.g. app back from background) */
+  | { type: 'request_state' }
+  /** Liveness check, answered by pong */
+  | { type: 'ping' };
 
 export type WSServerMessage =
   | { type: 'game_state'; game: GameSnapshot; serverNow: number }
@@ -175,6 +180,10 @@ export type WSServerMessage =
   | { type: 'prey_ping_status'; lastPing: Position | null; lastPingAt: number | null; nextPingAt: number | null }
   | { type: 'voice_chunk'; sessionId: string; pseudo: string; channel: ChatChannel; seq: number; data: string }
   | { type: 'voice_end'; sessionId: string }
+  | { type: 'player_removed'; sessionId: string }
+  /** Sent to a player excluded from the lobby by the host */
+  | { type: 'kicked' }
+  | { type: 'pong' }
   | { type: 'all_positions'; positions: Array<{ sessionId: string; pseudo: string; role: Role; latitude: number; longitude: number; timestamp: number }> }
   | { type: 'game_dissolved' }
   | { type: 'error'; message: string }

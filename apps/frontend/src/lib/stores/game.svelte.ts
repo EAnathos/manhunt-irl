@@ -18,6 +18,8 @@ export const gameStore = $state<{
   pingStatus: { lastPing: Position | null; lastPingAt: number | null; nextPingAt: number | null } | null;
   meetingPoint: LatLng | null;
   allPositions: Array<{ sessionId: string; pseudo: string; role: Role; latitude: number; longitude: number; timestamp: number }>;
+  /** Set when the host excluded me from the lobby */
+  kicked: boolean;
 }>({
   game: null,
   hunterPositions: [],
@@ -33,6 +35,7 @@ export const gameStore = $state<{
   pingStatus: null,
   meetingPoint: null,
   allPositions: [],
+  kicked: false,
 });
 
 export function serverNow(): number {
@@ -59,6 +62,16 @@ export function initGameListeners() {
           const exists = gameStore.game.players.some((p) => p.sessionId === msg.player.sessionId);
           if (!exists) gameStore.game.players = [...gameStore.game.players, msg.player];
         }
+        break;
+
+      case 'player_removed':
+        if (gameStore.game) {
+          gameStore.game.players = gameStore.game.players.filter((p) => p.sessionId !== msg.sessionId);
+        }
+        break;
+
+      case 'kicked':
+        gameStore.kicked = true;
         break;
 
       case 'player_left':
