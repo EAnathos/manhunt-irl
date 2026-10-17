@@ -504,6 +504,8 @@ L'icône de l'application représente une cible / viseur (crosshair) stylisée :
 
 **Écran de démarrage (splash)** : intégré en HTML/SVG inline dans `app.html` (affiché avant le chargement du JS, sans image externe). Le viseur s'anime anneau par anneau avec une onde radar, sur un halo rouge radial tramé d'un léger grain (évite les bandes du dégradé sombre). Affichage minimum 1,1 s, puis sortie en fondu + flou ; le contenu de la page entre ensuite (classe `html.app-ready`, éléments `.reveal`), sans chevauchement des deux logos. L'accueil reprend le même viseur (`Logo.svelte`) et le même mot-symbole pour la continuité.
 
+**« Secouer pour annuler » (iOS)** : iOS propose « Annuler la saisie » quand on secoue le téléphone s'il reste une saisie annulable, ce qui arrive en courant. Une page web ne peut pas désactiver cette fonction ; l'app vide donc l'historique d'annulation à chaque sortie d'un champ texte (réaffectation de la valeur par script, ce qui purge l'historique WebKit). Désactivation complète possible côté joueur : Réglages → Accessibilité → Toucher → Secouer pour annuler.
+
 **Zones sûres iOS** : `viewport-fit=cover` + barre d'état translucide ; tous les éléments fixes (chrono, boutons, panneau du bas, chat, talkie-walkie) sont décalés via `env(safe-area-inset-*)` (variables `--safe-top` / `--safe-bottom`).
 
 ### 8.2. Charte couleurs

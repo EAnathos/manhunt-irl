@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
   let { children } = $props();
@@ -6,8 +6,33 @@
   // Safety net: never leave .reveal content hidden if the splash script didn't run.
   onMount(() => {
     const t = setTimeout(() => document.documentElement.classList.add('app-ready'), 3000);
-    return () => clearTimeout(t);
+    document.addEventListener('focusout', clearUndoHistory, true);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('focusout', clearUndoHistory, true);
+    };
   });
+
+  const TEXT_INPUT_TYPES = new Set(['text', 'search', 'tel', 'url', 'email', 'password', 'number']);
+
+  /**
+   * iOS "Shake to Undo" pops up whenever the page has undoable typing, which
+   * happens constantly while running with the phone. Web pages can't disable it,
+   * but WebKit drops the undo history when a field's value is set from script:
+   * do a no-op change when leaving a text field so there's nothing left to undo.
+   */
+  function clearUndoHistory(e: FocusEvent) {
+    const el = e.target;
+    const isText = el instanceof HTMLTextAreaElement
+      || (el instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(el.type));
+    if (!isText) return;
+    const field = el as HTMLInputElement | HTMLTextAreaElement;
+    const value = field.value;
+    try {
+      field.value = `${value} `;
+      field.value = value;
+    } catch { /* number inputs reject non-numeric values */ }
+  }
 </script>
 
 <svelte:head>
