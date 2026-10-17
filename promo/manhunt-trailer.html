@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ManHunt — Trailer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#0f0f0f; --surface:#1a1a1a; --border:#333; --text:#e8e8e8; --muted:#888; --accent:#ff4444; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #050505; color: var(--text); font-family: Inter, -apple-system, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 16px; }
+  .stage { position: relative; width: min(100%, calc((100vh - 110px) * 16 / 9)); aspect-ratio: 16 / 9; }
+  canvas { width: 100%; height: 100%; display: block; border-radius: 8px; background: var(--bg); box-shadow: 0 20px 80px rgba(255,68,68,.12); }
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(15,15,15,.55); border-radius: 8px; cursor: pointer; }
+  .overlay[hidden] { display: none; }
+  .play { width: 120px; height: 120px; border-radius: 50%; background: var(--accent); display: grid; place-items: center; box-shadow: 0 0 60px rgba(255,68,68,.6); transition: transform .15s; }
+  .overlay:hover .play { transform: scale(1.08); }
+  .play::after { content: ""; border-left: 38px solid #fff; border-top: 24px solid transparent; border-bottom: 24px solid transparent; margin-left: 10px; }
+  .bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button { font: 600 15px Inter, system-ui, sans-serif; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  button:hover { background: #252525; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .progress { width: min(100%, 480px); height: 6px; background: var(--surface); border-radius: 3px; overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: var(--accent); }
+  #status { color: var(--muted); font-size: 14px; min-width: 180px; text-align: center; }
+  a#dl { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="stage">
+  <canvas id="c" width="1920" height="1080"></canvas>
+  <div class="overlay" id="overlay"><div class="play"></div></div>
+</div>
+<div class="bar">
+  <button class="primary" id="btnPlay">▶ Lire</button>
+  <button id="btnRec">⏺ Enregistrer en vidéo (.webm)</button>
+  <div class="progress"><div id="prog"></div></div>
+  <span id="status">30 s · 1920×1080</span>
+  <a id="dl" hidden>Télécharger la vidéo</a>
+</div>
+
+<script>
+'use strict';
+// ════════════════════════════════════════════════════════════
+//  Constantes & charte
+// ════════════════════════════════════════════════════════════
+const W = 1920, H = 1080, DURATION = 30;
+const C = {
+  bg: '#0f0f0f', surface: '#1a1a1a', hover: '#252525', border: '#333',
+  text: '#e8e8e8', muted: '#888', red: '#ff4444', blue: '#44aaff',
+  green: '#44cc44', yellow: '#ffaa00',
+};
+const FONT = 'Inter, -apple-system, system-ui, sans-serif';
+
+const canvas = document.getElementById('c');
+const out = canvas.getContext('2d');
+const buf = document.createElement('canvas');
+buf.width = W; buf.height = H;
+let ctx = buf.getContext('2d');
+
+// ════════════════════════════════════════════════════════════
+//  Utilitaires
+// ════════════════════════════════════════════════════════════
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const eo = t => 1 - Math.pow(1 - t, 3);
+const eio = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const eexp = t => t >= 1 ? 1 : 1 - Math.pow(2, -10 * t);
+const eback = t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const decay = (t, t0, k) => t >= t0 ? Math.exp(-(t - t0) * k) : 0;
+function rng(seed) {
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const hash = n => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const rgba = (hex, a) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`;
+};
+
+function fnt(size, weight = 900) { return `${weight} ${size}px ${FONT}`; }
+function setLS(c, px) { if ('letterSpacing' in c) c.letterSpacing = px + 'px'; }
+
+function text(str, x, y, o = {}) {
+  const { size = 80, weight = 900, color = C.text, align = 'center', base = 'middle', alpha = 1, ls = 0, glow = 0, stroke = 0 } = o;
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.font = fnt(size, weight);
+  ctx.textAlign = align; ctx.textBaseline = base;
+  setLS(ctx, ls);
+  if (glow) { ctx.shadowColor = color; ctx.shadowBlur = glow; }
+  if (stroke) { ctx.lineWidth = stroke; ctx.strokeStyle = color; ctx.strokeText(str, x, y); }
+  else { ctx.fillStyle = color; ctx.fillText(str, x, y); }
+  ctx.restore();
+}
+function measure(str, size, weight = 900, ls = 0) {
+  ctx.save(); ctx.font = fnt(size, weight); setLS(ctx, ls);
+  const w = ctx.measureText(str).width; ctx.restore(); return w;
+}
+// Texte avec aberration chromatique rouge / bleu (les deux couleurs de rôle)
+function gtext(str, x, y, o, amt) {
+  if (amt > 0.5) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    text(str, x - amt, y, { ...o, color: C.red, alpha: (o.alpha ?? 1) * .7, glow: 0 });
+    text(str, x + amt, y + amt * .3, { ...o, color: C.blue, alpha: (o.alpha ?? 1) * .7, glow: 0 });
+    ctx.restore();
+  }
+  text(str, x, y, o);
+}
+function rrect(x, y, w, h, r) {
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, r);
+}
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, Math.max(0, r), 0, Math.PI * 2); }
+
+// ════════════════════════════════════════════════════════════
+//  Timeline : impacts (shake / flash / glitch) & cuts
+// ════════════════════════════════════════════════════════════
+const IMPACTS = [[1.5, 1], [3, .5], [4, .5], [5, .7], [6, .4], [9.5, .4], [11.5, .9], [15, 1], [16, .3], [21, .6], [22.5, .8], [25.5, 1.1], [27, .8], [27.4, .6]];
+const CUTS = [3, 6, 9.5, 13, 16, 21, 24, 27];
+const impactAt = (t, k) => IMPACTS.reduce((s, [ti, v]) => s + v * decay(t, ti, k), 0);
+const glitchAmt = t => 18 * impactAt(t, 10);
+const musicOn = t => (t >= 3 && t < 13) || (t >= 15 && t < 25) || (t >= 25.5 && t < 29.5);
+const beatPulse = t => musicOn(t) ? Math.exp(-((t * 2) % 1) * 6) : 0;
+
+// ════════════════════════════════════════════════════════════
+//  Logo
+// ════════════════════════════════════════════════════════════
+function drawIcon(cx, cy, s, p = 1, alpha = 1, rot = 0) {
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(rot); ctx.scale(s, s); ctx.translate(-256, -256);
+  ctx.strokeStyle = C.red; ctx.lineCap = 'round';
+  [[180, 18, .3], [120, 14, .6], [60, 10, 1]].forEach(([r, w, o], i) => {
+    const q = eo(seg(p, i * .12, .45 + i * .12));
+    if (q <= 0) return;
+    ctx.globalAlpha = alpha * o; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.arc(256, 256, r, -Math.PI / 2, -Math.PI / 2 + q * Math.PI * 2); ctx.stroke();
+  });
+  ctx.globalAlpha = alpha; ctx.lineWidth = 8;
+  const q = eo(seg(p, .45, .8));
+  if (q > 0) [[256, 40, 256, 160], [256, 472, 256, 352], [40, 256, 160, 256], [472, 256, 352, 256]].forEach(([x1, y1, x2, y2]) => {
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(lerp(x1, x2, q), lerp(y1, y2, q)); ctx.stroke();
+  });
+  const d = eback(seg(p, .8, 1));
+  if (d > 0) { ctx.fillStyle = C.red; circle(256, 256, 12 * d); ctx.fill(); }
+  ctx.restore();
+}
+function drawLogoText(x, y, size, g = 0, alpha = 1) {
+  const ls = -size * .025;
+  const wm = measure('Man', size, 900, ls), wh = measure('Hunt', size, 900, ls);
+  const x0 = x - (wm + wh) / 2;
+  const o = { size, align: 'left', ls, alpha };
+  gtext('Man', x0, y, { ...o, color: C.red, glow: 30 }, g);
+  gtext('Hunt', x0 + wm, y, { ...o, color: C.text }, g);
+}
+
+// ════════════════════════════════════════════════════════════
+//  Ville procédurale (rendue une fois dans un canvas offscreen)
+// ════════════════════════════════════════════════════════════
+const WW = 4000, WH = 2600;
+const R = rng(1337);
+const xs = [], ys = [];
+for (let x = -40; x < WW + 200; x += 170) xs.push(x + (R() - .5) * 60);
+for (let y = -40; y < WH + 200; y += 150) ys.push(y + (R() - .5) * 50);
+const ci = Math.floor(xs.length / 2), cj = Math.floor(ys.length / 2);
+const ZC = { x: xs[ci], y: ys[cj] }, ZR = 1080;
+
+const mapCanvas = document.createElement('canvas');
+mapCanvas.width = WW; mapCanvas.height = WH;
+(function buildMap() {
+  const m = mapCanvas.getContext('2d');
+  m.fillStyle = '#121212'; m.fillRect(0, 0, WW, WH);
+  for (let i = 0; i < xs.length - 1; i++) for (let j = 0; j < ys.length - 1; j++) {
+    const x0 = xs[i], x1 = xs[i + 1], y0 = ys[j], y1 = ys[j + 1];
+    if (R() < .07) {
+      m.fillStyle = '#122016'; m.fillRect(x0, y0, x1 - x0, y1 - y0);
+      m.fillStyle = '#17291c';
+      for (let k = 0; k < 6; k++) { m.beginPath(); m.arc(lerp(x0 + 20, x1 - 20, R()), lerp(y0 + 20, y1 - 20, R()), 8 + R() * 10, 0, 7); m.fill(); }
+    } else {
+      const mx = lerp(x0, x1, .35 + R() * .3), my = lerp(y0, y1, .35 + R() * .3);
+      [[x0, y0, mx, my], [mx, y0, x1, my], [x0, my, mx, y1], [mx, my, x1, y1]].forEach(([a, b, c, d]) => {
+        m.fillStyle = R() < .5 ? '#191919' : '#1d1d1d';
+        m.fillRect(a + 9, b + 9, c - a - 18, d - b - 18);
+      });
+    }
+  }
+  // Rivière
+  m.lineCap = 'round';
+  const river = () => { m.beginPath(); m.moveTo(-100, 2000); m.bezierCurveTo(900, 1750, 1600, 2450, 2600, 2150); m.bezierCurveTo(3300, 1950, 3700, 2250, 4200, 2050); };
+  m.strokeStyle = '#0d1a24'; m.lineWidth = 120; river(); m.stroke();
+  m.strokeStyle = '#10212e'; m.lineWidth = 86; river(); m.stroke();
+  // Routes
+  const road = (x1, y1, x2, y2, av) => {
+    m.strokeStyle = av ? '#2c2c2c' : '#232323'; m.lineWidth = av ? 26 : 12;
+    m.beginPath(); m.moveTo(x1, y1); m.lineTo(x2, y2); m.stroke();
+  };
+  xs.forEach((x, i) => road(x, -50, x, WH + 50, i % 4 === 1));
+  ys.forEach((y, j) => road(-50, y, WW + 50, y, j % 4 === 2));
+  road(150, 150, 3850, 2550, true);
+  m.setLineDash([18, 22]); m.strokeStyle = '#3b3b3b'; m.lineWidth = 2;
+  xs.forEach((x, i) => { if (i % 4 === 1) { m.beginPath(); m.moveTo(x, 0); m.lineTo(x, WH); m.stroke(); } });
+  ys.forEach((y, j) => { if (j % 4 === 2) { m.beginPath(); m.moveTo(0, y); m.lineTo(WW, y); m.stroke(); } });
+  m.setLineDash([]);
+})();
+
+// Chemins le long des rues (marche aléatoire sur la grille, confinée dans la zone)
+function walk(seed, si, sj, steps) {
+  const r = rng(seed);
+  let i = si, j = sj, last = -1;
+  const pts = [[xs[i], ys[j]]];
+  const inside = (a, b) => Math.hypot(xs[a] - ZC.x, ys[b] - ZC.y) < ZR - 120;
+  for (let s = 0; s < steps; s++) {
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]].map((d, k) => ({ d, k }))
+      .filter(({ d, k }) => inside(i + d[0], j + d[1]) && k !== (last ^ 1));
+    if (!dirs.length) break;
+    const { d, k } = dirs[Math.floor(r() * dirs.length)];
+    const len = 1 + Math.floor(r() * 3);
+    for (let L = 0; L < len && inside(i + d[0], j + d[1]); L++) { i += d[0]; j += d[1]; pts.push([xs[i], ys[j]]); }
+    last = k;
+  }
+  const cum = [0];
+  for (let k = 1; k < pts.length; k++) cum.push(cum[k - 1] + Math.hypot(pts[k][0] - pts[k - 1][0], pts[k][1] - pts[k - 1][1]));
+  return { pts, cum };
+}
+function along(p, d) {
+  const { pts, cum } = p;
+  d = clamp(d, 0, cum[cum.length - 1]);
+  let k = 1; while (k < cum.length - 1 && cum[k] < d) k++;
+  const f = (d - cum[k - 1]) / (cum[k] - cum[k - 1] || 1);
+  return { x: lerp(pts[k - 1][0], pts[k][0], f), y: lerp(pts[k - 1][1], pts[k][1], f) };
+}
+// Les proies se déplacent en groupe : un seul chemin, formation en triangle (décalage écran)
+const preyPath = walk(3, ci - 1, cj, 40);
+const PREY_FORMATION = [[0, -24], [26, 16], [-26, 16]];
+const hunterPaths = [walk(43, ci, cj + 1, 40), walk(45, ci, cj - 1, 40), walk(41, ci, cj + 1, 40)];
+const preyDist = t => t < 13 ? 0 : t < 16 ? (t - 13) * 260 : 780 + (t - 16) * 55;
+const hunterDist = t => t < 15 ? 0 : (t - 15) * 170;
+
+// Caméra
+let cam = { x: ZC.x, y: ZC.y, z: 1, r: 0 };
+function w2s(x, y) {
+  const dx = (x - cam.x) * cam.z, dy = (y - cam.y) * cam.z;
+  const c = Math.cos(cam.r), s = Math.sin(cam.r);
+  return { x: W / 2 + dx * c - dy * s, y: H / 2 + dx * s + dy * c };
+}
+function drawMap(dark = 0) {
+  ctx.save();
+  ctx.fillStyle = '#121212'; ctx.fillRect(0, 0, W, H);
+  ctx.translate(W / 2, H / 2); ctx.rotate(cam.r); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+  ctx.drawImage(mapCanvas, 0, 0);
+  ctx.restore();
+  if (dark) { ctx.fillStyle = `rgba(15,15,15,${dark})`; ctx.fillRect(0, 0, W, H); }
+}
+function drawZone(t, color = C.red) {
+  const c = w2s(ZC.x, ZC.y), r = ZR * cam.z;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(c.x, c.y, r, 0, Math.PI * 2, true);
+  ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
+  circle(c.x, c.y, r); ctx.fillStyle = rgba(color, .06); ctx.fill();
+  ctx.setLineDash([26, 16]); ctx.lineDashOffset = -t * 40;
+  ctx.lineWidth = 5; ctx.strokeStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 20;
+  circle(c.x, c.y, r); ctx.stroke();
+  ctx.restore();
+}
+function marker(x, y, color, { r = 14, alpha = 1, glow = 1 } = {}) {
+  ctx.save(); ctx.globalAlpha *= alpha;
+  ctx.shadowColor = color; ctx.shadowBlur = 30 * glow;
+  ctx.fillStyle = color; circle(x, y, r); ctx.fill();
+  ctx.shadowBlur = 0; ctx.lineWidth = 4; ctx.strokeStyle = '#fff'; circle(x, y, r); ctx.stroke();
+  ctx.restore();
+}
+function trail(path, d, len, color, alpha = 1) {
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const n = 16;
+  for (let k = 0; k < n; k++) {
+    const a = along(path, d - len * (k + 1) / n), b = along(path, d - len * k / n);
+    const A = w2s(a.x, a.y), B = w2s(b.x, b.y);
+    ctx.globalAlpha = alpha * (1 - k / n) * .7; ctx.strokeStyle = color; ctx.lineWidth = 8 * (1 - k / n) + 1;
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+function ripple(x, y, color, p, max = 170) {
+  if (p < 0 || p > 1) return;
+  ctx.save();
+  for (let k = 0; k < 2; k++) {
+    const q = clamp(p * 1.25 - k * .25);
+    if (q <= 0) continue;
+    ctx.globalAlpha = (1 - q) * .9; ctx.strokeStyle = color; ctx.lineWidth = 6 * (1 - q) + 1;
+    circle(x, y, lerp(14, max, eo(q))); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+//  Éléments de décor communs
+// ════════════════════════════════════════════════════════════
+function bg(color = C.bg) { ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); }
+function gridBg(t, a = .05, speed = 30) {
+  ctx.save(); ctx.strokeStyle = `rgba(255,255,255,${a})`; ctx.lineWidth = 1;
+  const s = 80, off = (t * speed) % s;
+  ctx.beginPath();
+  for (let x = -s + off; x < W + s; x += s) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = -s + off; y < H + s; y += s) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke(); ctx.restore();
+}
+function radial(x, y, r, color, a) {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, rgba(color, a)); g.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function edgeGlow(color, a) {
+  const g = ctx.createRadialGradient(W / 2, H / 2, H * .35, W / 2, H / 2, W * .65);
+  g.addColorStop(0, rgba(color, 0)); g.addColorStop(1, rgba(color, a));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+function hazard(y, h, color, t) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, y, W, h); ctx.clip();
+  ctx.fillStyle = '#0f0f0f'; ctx.fillRect(0, y, W, h);
+  ctx.fillStyle = color;
+  const s = 60, off = (t * 240) % (s * 2);
+  for (let x = -h - s * 2 + off; x < W + h; x += s * 2) {
+    ctx.beginPath(); ctx.moveTo(x, y + h); ctx.lineTo(x + h, y); ctx.lineTo(x + h + s, y); ctx.lineTo(x + s, y + h); ctx.fill();
+  }
+  ctx.restore();
+}
+function pill(x, y, w, h, fill, stroke) {
+  rrect(x, y, w, h, h / 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.lineWidth = 2; ctx.strokeStyle = stroke; ctx.stroke(); }
+}
+// Ligne de texte qui glisse depuis la gauche avec masque
+function slideText(str, x, y, t0, t, o) {
+  const p = eo(seg(t, t0, t0 + .35));
+  if (p <= 0) return;
+  ctx.save();
+  const w = measure(str, o.size, o.weight ?? 900, o.ls ?? 0);
+  ctx.beginPath(); ctx.rect(x - 10, y - o.size, (w + 40) * p, o.size * 2); ctx.clip();
+  text(str, x + (1 - p) * -60, y, { ...o, align: 'left' });
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 1 — Intro logo (0 → 3 s)
+// ════════════════════════════════════════════════════════════
+function sIntro(t) {
+  bg();
+  radial(W / 2, H / 2, 950, C.red, .2 * eo(seg(t, 0, 1.5)) + .15 * decay(t, 1.5, 3));
+  gridBg(t, .04 * seg(t, 0, 1));
+  const m = eo(seg(t, 1.35, 1.75));
+  const s = lerp(.95, .52, m) * (1 + .08 * decay(t, 1.5, 6));
+  drawIcon(W / 2, lerp(H / 2, 360, m), s, seg(t, .1, 1.35), 1, (1 - eo(seg(t, .1, 1.35))) * -1.4);
+  // onde de choc
+  if (t > 1.5) {
+    const q = seg(t, 1.5, 2.1);
+    ctx.save(); ctx.globalAlpha = 1 - q; ctx.strokeStyle = C.red; ctx.lineWidth = 10 * (1 - q);
+    circle(W / 2, 360, lerp(140, 1100, eo(q))); ctx.stroke(); ctx.restore();
+  }
+  if (t >= 1.5) {
+    const sc = lerp(1.9, 1, eexp(seg(t, 1.5, 1.8)));
+    ctx.save(); ctx.translate(W / 2, 680); ctx.scale(sc, sc);
+    drawLogoText(0, 0, 180, glitchAmt(t), seg(t, 1.5, 1.6));
+    ctx.restore();
+  }
+  if (t >= 2.05) {
+    const str = 'CHASSE EN CONDITIONS RÉELLES';
+    const n = Math.floor(seg(t, 2.05, 2.6) * str.length);
+    text(str.slice(0, n) + (Math.floor(t * 8) % 2 && n < str.length ? '▌' : ''), W / 2, 815, { size: 34, weight: 600, color: C.muted, ls: 12 });
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 2 — « Tes potes. Ta ville. Une chasse. » (3 → 6 s)
+// ════════════════════════════════════════════════════════════
+function sKinetic(t) {
+  cam = { x: ZC.x + (t - 3) * 60, y: ZC.y - (t - 3) * 30, z: lerp(.9, 1.15, seg(t, 3, 6)), r: lerp(-.12, -.04, seg(t, 3, 6)) };
+  drawMap(.72);
+  edgeGlow(C.red, .25 + .2 * beatPulse(t));
+  const words = [['TES POTES.', 3, C.text], ['TA VILLE.', 4, C.text], ['UNE CHASSE.', 5, C.red]];
+  words.forEach(([w, t0, col], i) => {
+    if (t < t0) return;
+    const p = seg(t, t0, t0 + .28);
+    const sc = lerp(2.6, 1, eexp(p));
+    const y = 330 + i * 210;
+    const active = t < t0 + 1 || i === 2;
+    ctx.save(); ctx.translate(W / 2, y); ctx.scale(sc, sc);
+    gtext(w, 0, 0, { size: 175, color: col, alpha: clamp(p * 4) * (active ? 1 : .35), glow: i === 2 ? 40 : 0, ls: -4 }, glitchAmt(t) * (active ? 1 : 0));
+    ctx.restore();
+  });
+  // strobe
+  const f = words.reduce((s, [, t0]) => s + decay(t, t0, 14), 0);
+  if (f > .01) { ctx.fillStyle = `rgba(255,255,255,${.18 * f})`; ctx.fillRect(0, 0, W, H); }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 3 — Lobby : un code, toute ta team (6 → 9.5 s)
+// ════════════════════════════════════════════════════════════
+const CODE = 'HUNT42';
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const PLAYERS = [['Léo', C.red], ['Inès', C.blue], ['Max', C.green], ['Sacha', C.yellow], ['Nora', '#c06cff'], ['Yanis', '#ff7ab8']];
+function sLobby(t) {
+  bg(); gridBg(t, .045);
+  radial(560, 560, 700, C.red, .12);
+  radial(1400, 560, 700, C.blue, .07);
+  // Titre
+  const tp = eo(seg(t, 6, 6.35));
+  ctx.save(); ctx.globalAlpha = tp; ctx.translate(0, (1 - tp) * -40);
+  text('UN CODE.', W / 2 - 30, 150, { size: 96, align: 'right', ls: -2 });
+  text('TOUTE TA TEAM.', W / 2 + 10, 150, { size: 96, align: 'left', color: C.red, glow: 30, ls: -2 });
+  ctx.restore();
+
+  // Carte du code
+  const cp = eback(seg(t, 6.05, 6.45));
+  ctx.save(); ctx.translate(560, 560); ctx.scale(cp, cp);
+  rrect(-390, -190, 780, 380, 28); ctx.fillStyle = C.surface; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = rgba(C.red, .5 + .5 * decay(t, 7.3, 4)); ctx.stroke();
+  text('CODE DE LA PARTIE', 0, -120, { size: 28, weight: 600, color: C.muted, ls: 8 });
+  for (let k = 0; k < 6; k++) {
+    const bx = -330 + k * 112, ts = 6.4 + k * .16;
+    rrect(bx, -60, 100, 140, 14); ctx.fillStyle = C.hover; ctx.fill();
+    const settled = t >= ts;
+    const ch = settled ? CODE[k] : CODE_CHARS[Math.floor(hash(Math.floor(t * 22) + k * 7) * CODE_CHARS.length)];
+    const bump = settled ? 1 + .25 * decay(t, ts, 12) : 1;
+    ctx.save(); ctx.beginPath(); ctx.rect(bx, -60, 100, 140); ctx.clip();
+    ctx.translate(bx + 50, 12); ctx.scale(bump, bump);
+    text(ch, 0, settled ? 0 : ((t * 22) % 1) * 40 - 20, { size: 100, color: settled ? C.text : C.muted, alpha: settled ? 1 : .6 });
+    ctx.restore();
+  }
+  const sp = eo(seg(t, 7.4, 7.7));
+  text('Envoie-le à tes potes →', 0, 140, { size: 30, weight: 600, color: C.red, alpha: sp });
+  ctx.restore();
+
+  // Liste des joueurs
+  const lx = 1080, ly = 280;
+  const n = PLAYERS.filter((_, k) => t >= 7.0 + k * .36).length;
+  text('JOUEURS', lx, ly, { size: 30, weight: 800, color: C.muted, align: 'left', ls: 6 });
+  text(`${n}/20`, lx + 700, ly, { size: 30, weight: 800, color: C.text, align: 'right', alpha: .9 });
+  PLAYERS.forEach(([name, col], k) => {
+    const t0 = 7.0 + k * .36;
+    if (t < t0) return;
+    const p = seg(t, t0, t0 + .3), e = eback(p);
+    const x = lx + (1 - eo(p)) * 120, y = ly + 50 + k * 92;
+    ctx.save(); ctx.globalAlpha = clamp(p * 3);
+    ctx.translate(x + 350, y + 38); ctx.scale(lerp(.6, 1, e), lerp(.6, 1, e)); ctx.translate(-350, -38);
+    rrect(0, 0, 700, 76, 16); ctx.fillStyle = C.surface; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = C.border; ctx.stroke();
+    circle(44, 38, 24); ctx.fillStyle = col; ctx.fill();
+    text(name[0], 44, 39, { size: 26, color: '#0f0f0f' });
+    text(name, 88, 39, { size: 32, weight: 700, align: 'left' });
+    if (k === 0) { pill(560, 20, 116, 36, rgba(C.red, .15), C.red); text('HÔTE', 618, 39, { size: 18, weight: 800, color: C.red, ls: 3 }); }
+    else { circle(650, 38, 7); ctx.fillStyle = C.green; ctx.fill(); }
+    ctx.restore();
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 4 — Rôles : Chasseurs VS Proies (9.5 → 13 s)
+// ════════════════════════════════════════════════════════════
+const ROLES = [0, 1, 0, 0, 1, 0]; // 0 = chasseur, 1 = proie
+function sRoles(t) {
+  bg();
+  const sp = eo(seg(t, 9.5, 9.95));
+  const tilt = 160;
+  // moitiés
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(W / 2 + tilt, 0); ctx.lineTo(W / 2 - tilt, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.translate(-(1 - sp) * W * .6, 0);
+  let g = ctx.createLinearGradient(0, 0, W / 2, 0); g.addColorStop(0, '#2a0b0b'); g.addColorStop(1, '#170c0c');
+  ctx.fillStyle = g; ctx.fill(); ctx.restore();
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(W / 2 + tilt, 0); ctx.lineTo(W, 0); ctx.lineTo(W, H); ctx.lineTo(W / 2 - tilt, H); ctx.closePath();
+  ctx.translate((1 - sp) * W * .6, 0);
+  g = ctx.createLinearGradient(W / 2, 0, W, 0); g.addColorStop(0, '#0b1520'); g.addColorStop(1, '#0a1d2e');
+  ctx.fillStyle = g; ctx.fill(); ctx.restore();
+  // ligne de séparation lumineuse
+  ctx.save(); ctx.globalAlpha = sp; ctx.strokeStyle = '#fff'; ctx.lineWidth = 6; ctx.shadowColor = '#fff'; ctx.shadowBlur = 30 + 60 * decay(t, 11.5, 5);
+  ctx.beginPath(); ctx.moveTo(W / 2 + tilt, -10); ctx.lineTo(W / 2 - tilt, H + 10); ctx.stroke(); ctx.restore();
+
+  // Titres
+  const hp = eo(seg(t, 9.8, 10.2));
+  drawIcon(500, 160, .16, seg(t, 9.8, 10.4));
+  text('CHASSEURS', 500, 280, { size: 104, color: C.red, glow: 30, alpha: hp, ls: -2 });
+  ctx.save(); ctx.globalAlpha = hp;
+  ctx.translate(1420, 160); ctx.fillStyle = C.blue; ctx.shadowColor = C.blue; ctx.shadowBlur = 25;
+  ctx.beginPath(); ctx.arc(0, -10, 36, Math.PI, 0); ctx.lineTo(0, 50); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#0a1d2e'; circle(0, -10, 14); ctx.fill(); ctx.restore();
+  text('PROIES', 1420, 280, { size: 104, color: C.blue, glow: 30, alpha: hp, ls: -2 });
+
+  // Les pseudos : roulette puis envoi dans chaque camp
+  const idx = [0, 0];
+  PLAYERS.forEach(([name], k) => {
+    const role = ROLES[k];
+    const slot = idx[role]++;
+    const t0 = 10.15 + k * .2;
+    const p = eio(seg(t, t0, t0 + .45));
+    const sx = W / 2, sy = 420 + k * 80;
+    const tx = role ? 1420 : 500, ty = 400 + slot * 100;
+    const x = lerp(sx, tx, p), y = lerp(sy, ty, p);
+    const flick = p === 0 ? (Math.floor(t * 18 + k) % 2) : role;
+    const col = flick ? C.blue : C.red;
+    const a = clamp(seg(t, 9.6 + k * .04, 9.8 + k * .04));
+    if (a <= 0) return;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(x, y);
+    const w = 300;
+    rrect(-w / 2, -34, w, 68, 34); ctx.fillStyle = 'rgba(15,15,15,.85)'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = col; ctx.shadowColor = col; ctx.shadowBlur = p >= 1 ? 18 * decay(t, t0 + .45, 4) + 6 : 10; ctx.stroke();
+    ctx.shadowBlur = 0;
+    circle(-w / 2 + 34, 0, 12); ctx.fillStyle = col; ctx.fill();
+    text(name, 10, 1, { size: 32, weight: 700 });
+    ctx.restore();
+  });
+
+  // VS
+  if (t >= 11.5) {
+    const p = seg(t, 11.5, 11.75);
+    const sc = lerp(3, 1, eexp(p)) * (1 + .05 * beatPulse(t));
+    const q = seg(t, 11.5, 12.2);
+    ctx.save(); ctx.globalAlpha = 1 - q; ctx.strokeStyle = '#fff'; ctx.lineWidth = 12 * (1 - q);
+    circle(W / 2, H / 2 + 40, lerp(80, 700, eo(q))); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.translate(W / 2, H / 2 + 40); ctx.scale(sc, sc); ctx.rotate(-.08);
+    gtext('VS', 0, 0, { size: 240, color: '#fff', glow: 40, alpha: clamp(p * 4) }, glitchAmt(t) * 1.4);
+    ctx.restore();
+  }
+  text('RÔLES TIRÉS AU SORT', W / 2, 1010, { size: 30, weight: 700, color: C.muted, ls: 12, alpha: eo(seg(t, 12, 12.3)) });
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 5 — Délai de grâce : cache-toi ! (13 → 16 s)
+// ════════════════════════════════════════════════════════════
+function sGrace(t) {
+  const p = seg(t, 13, 16);
+  cam = { x: ZC.x, y: ZC.y, z: lerp(1.05, .6, eio(p)), r: lerp(-.1, -.05, p) };
+  drawMap(.15);
+  const hunt = t >= 15;
+  drawZone(t, C.red);
+  {
+    const d = preyDist(t), q = along(preyPath, d), s = w2s(q.x, q.y), a = hunt ? 1 - seg(t, 15, 15.6) : 1;
+    trail(preyPath, d, 240, C.blue, a);
+    PREY_FORMATION.forEach(([ox, oy], k) => marker(s.x + ox + Math.sin(t * 7 + k * 2) * 3, s.y + oy + Math.cos(t * 6 + k) * 3, C.blue, { alpha: a }));
+  }
+  hunterPaths.forEach((hp, k) => {
+    const d = hunterDist(t), q = along(hp, d), s = w2s(q.x, q.y);
+    marker(s.x + (hunt ? 0 : (k - 1) * 34), s.y, C.red, { alpha: hunt ? 1 : .45, glow: hunt ? 1 : 0 });
+  });
+  // teinte
+  if (!hunt) { ctx.fillStyle = rgba(C.blue, .08); ctx.fillRect(0, 0, W, H); edgeGlow(C.blue, .35); }
+  else { edgeGlow(C.red, .5 * decay(t, 15, 2) + .15); }
+
+  if (!hunt) {
+    const tp = seg(t, 13, 13.25);
+    ctx.save(); ctx.translate(W / 2, 170); const sc = lerp(2.2, 1, eexp(tp)); ctx.scale(sc, sc);
+    gtext('CACHE-TOI !', 0, 0, { size: 130, color: C.blue, glow: 40, alpha: clamp(tp * 4), ls: -3 }, glitchAmt(t) + 6 * decay(t, 13, 8));
+    ctx.restore();
+    [['3', 13.5], ['2', 14.0], ['1', 14.5]].forEach(([n, t0]) => {
+      if (t < t0 || t >= t0 + .5) return;
+      const q = seg(t, t0, t0 + .5);
+      ctx.save(); ctx.translate(W / 2, H / 2 + 40); const s = lerp(1.6, .9, eo(q)); ctx.scale(s, s);
+      text(n, 0, 0, { size: 440, color: '#fff', alpha: 1 - q * .7, stroke: 10, glow: 30 });
+      text(n, 0, 0, { size: 440, color: '#fff', alpha: (1 - q) * .12 });
+      ctx.restore();
+    });
+    if (t < 13.5) text('Les chasseurs attendent…', W / 2, H / 2 + 40, { size: 44, weight: 600, color: C.text, alpha: seg(t, 13.1, 13.3) * .9 });
+    text('DÉLAI DE GRÂCE', W / 2, 1000, { size: 30, weight: 700, color: C.blue, ls: 12, alpha: seg(t, 13.2, 13.5) });
+  } else {
+    const tp = seg(t, 15, 15.25);
+    ctx.save(); ctx.translate(W / 2, H / 2); const sc = lerp(3, 1, eexp(tp)); ctx.scale(sc, sc);
+    gtext('LA CHASSE', 0, -70, { size: 170, color: C.text, alpha: clamp(tp * 4), ls: -4 }, glitchAmt(t));
+    gtext('COMMENCE', 0, 90, { size: 170, color: C.red, glow: 50, alpha: clamp(tp * 4), ls: -4 }, glitchAmt(t));
+    ctx.restore();
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 6 — Carte en direct : chasseurs live, proies par ping (16 → 21 s)
+// ════════════════════════════════════════════════════════════
+const PINGS = [16.55, 18.35, 19.6, 20.5];
+function sLive(t) {
+  const p = seg(t, 16, 21);
+  cam = { x: ZC.x + 80 * p, y: ZC.y - 40 * p, z: lerp(.6, .7, p), r: lerp(-.05, .02, p) };
+  drawMap(.05);
+  drawZone(t);
+  // Proies : seulement la dernière position pingée
+  const past = PINGS.filter(pt => pt <= t);
+  const last = past.length ? past[past.length - 1] : null;
+  if (last !== null) {
+    const q = along(preyPath, preyDist(last)), s = w2s(q.x, q.y);
+    ripple(s.x, s.y, C.blue, seg(t, last, last + .9), 220);
+    PREY_FORMATION.forEach(([ox, oy]) =>
+      marker(s.x + ox, s.y + oy, C.blue, { alpha: lerp(1, .35, seg(t, last + .3, last + 1.2)), glow: 1 - seg(t, last, last + 1) * .7 }));
+    const lp = seg(t, last, last + .8);
+    if (lp < 1) text('PING', s.x, s.y - 60 - lp * 30, { size: 24, weight: 900, color: C.blue, alpha: 1 - lp, ls: 4 });
+  }
+  // Chasseurs : en continu
+  hunterPaths.forEach(hp => {
+    const d = hunterDist(t), q = along(hp, d), s = w2s(q.x, q.y);
+    trail(hp, d, 300, C.red);
+    marker(s.x, s.y, C.red);
+  });
+  // dégradé bas pour les textes
+  const g = ctx.createLinearGradient(0, H * .55, 0, H);
+  g.addColorStop(0, 'rgba(15,15,15,0)'); g.addColorStop(1, 'rgba(15,15,15,.9)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+  // HUD
+  const hp = eo(seg(t, 16, 16.3));
+  ctx.save(); ctx.globalAlpha = hp; ctx.translate(0, (1 - hp) * -60);
+  pill(60, 50, 230, 64, 'rgba(26,26,26,.92)', C.border);
+  circle(100, 82, 10); ctx.fillStyle = Math.floor(t * 2.5) % 2 ? C.red : rgba(C.red, .3); ctx.fill();
+  text('EN DIRECT', 122, 83, { size: 24, weight: 800, align: 'left', ls: 3 });
+  const secs = 42 * 60 + 17 - Math.floor((t - 16) * 1);
+  pill(W / 2 - 120, 50, 240, 64, 'rgba(26,26,26,.92)', C.border);
+  text(`${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`, W / 2, 84, { size: 34, weight: 800, ls: 2 });
+  pill(W - 330, 50, 270, 64, 'rgba(26,26,26,.92)', C.blue);
+  text('PROIES  3/3', W - 195, 83, { size: 24, weight: 800, color: C.blue, ls: 3 });
+  ctx.restore();
+
+  // Barre "prochain ping"
+  const next = PINGS.find(pt => pt > t) ?? 21.2;
+  const prev = last ?? 16;
+  const bp = seg(t, prev, next);
+  const bx = 1300, by = 990;
+  ctx.save(); ctx.globalAlpha = hp;
+  text('PROCHAIN PING', bx, by - 34, { size: 22, weight: 800, color: C.muted, align: 'left', ls: 4 });
+  rrect(bx, by, 540, 14, 7); ctx.fillStyle = C.surface; ctx.fill();
+  rrect(bx, by, 540 * bp, 14, 7); ctx.fillStyle = C.blue; ctx.shadowColor = C.blue; ctx.shadowBlur = 16; ctx.fill();
+  ctx.restore();
+
+  // Légendes
+  if (t < 18.35) {
+    slideText('LES CHASSEURS', 90, 850, 16.2, t, { size: 100, color: C.red, glow: 30, ls: -2 });
+    slideText('BOUGENT EN DIRECT', 90, 950, 16.4, t, { size: 74, ls: -1 });
+  } else {
+    slideText('LES PROIES', 90, 850, 18.35, t, { size: 100, color: C.blue, glow: 30, ls: -2 });
+    slideText('APPARAISSENT À CHAQUE PING', 90, 950, 18.55, t, { size: 74, ls: -1 });
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 7 — Hors zone (21 → 24 s)
+// ════════════════════════════════════════════════════════════
+const EA = -.35;
+const EN = { x: Math.cos(EA), y: Math.sin(EA) };
+const EP = { x: ZC.x + EN.x * ZR, y: ZC.y + EN.y * ZR };
+function sOutZone(t) {
+  const crit = t >= 22.5;
+  cam = { x: EP.x + EN.x * 60, y: EP.y + EN.y * 60, z: lerp(1.45, 1.75, seg(t, 21, 24)), r: .25 };
+  if (crit) { cam.x += (hash(t * 60) - .5) * 6; cam.y += (hash(t * 60 + 9) - .5) * 6; }
+  drawMap(.05);
+  drawZone(t, crit ? C.red : C.yellow);
+  // proie qui sort
+  const m = eo(seg(t, 21, 22.3));
+  const d = lerp(-240, 230, m) + Math.sin(t * 3) * 10;
+  const px = EP.x + EN.x * d + (-EN.y) * Math.sin(t * 2) * 30, py = EP.y + EN.y * d + EN.x * Math.sin(t * 2) * 30;
+  const s = w2s(px, py);
+  if (crit) {
+    for (let k = 0; k < 6; k++) ripple(s.x, s.y, C.red, seg(t, 22.5 + k * .25, 22.5 + k * .25 + .7), 260);
+    // chasseurs qui arrivent
+    const q = eio(seg(t, 22.6, 24.3));
+    [[-1, -.6], [-.8, .9]].forEach(([dx, dy]) => {
+      const S = { x: s.x + dx * lerp(900, 230, q), y: s.y + dy * lerp(500, 150, q) };
+      marker(S.x, S.y, C.red);
+    });
+  }
+  marker(s.x, s.y, C.blue, { r: 18 });
+
+  const col = crit ? C.red : C.yellow;
+  const blink = .5 + .5 * Math.cos(t * Math.PI * (crit ? 8 : 4));
+  edgeGlow(col, .35 + .35 * blink);
+  hazard(0, 64, col, t); hazard(H - 64, 64, col, -t);
+
+  const t0 = crit ? 22.5 : 21;
+  const tp = seg(t, t0, t0 + .22);
+  ctx.save(); ctx.translate(W / 2 + (crit ? (hash(t * 50) - .5) * 14 : 0), 230); const sc = lerp(2.4, 1, eexp(tp)); ctx.scale(sc, sc);
+  gtext(crit ? 'POSITION RÉVÉLÉE' : 'HORS ZONE', 0, 0, { size: crit ? 130 : 170, color: col, glow: 40, alpha: clamp(tp * 4), ls: -3 }, glitchAmt(t));
+  ctx.restore();
+  text(crit ? 'Les chasseurs te voient en continu…' : 'Reviens vite dans la zone !', W / 2, 355, { size: 44, weight: 700, alpha: seg(t, t0 + .15, t0 + .35) });
+
+  // anneau de compte à rebours
+  const cx = W - 260, cy = H / 2 + 120;
+  const frac = 1 - seg(t, t0, t0 + 1.5);
+  ctx.save();
+  circle(cx, cy, 120); ctx.fillStyle = 'rgba(15,15,15,.85)'; ctx.fill();
+  ctx.lineWidth = 14; ctx.strokeStyle = rgba(col, .2); circle(cx, cy, 100); ctx.stroke();
+  ctx.strokeStyle = col; ctx.lineCap = 'round'; ctx.shadowColor = col; ctx.shadowBlur = 20;
+  ctx.beginPath(); ctx.arc(cx, cy, 100, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
+  ctx.restore();
+  text(String(Math.ceil(frac * 15)), cx, cy - 6, { size: 90, color: col });
+  text('SEC', cx, cy + 50, { size: 20, weight: 800, color: C.muted, ls: 4 });
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 8 — Élimination (24 → 27 s)
+// ════════════════════════════════════════════════════════════
+function sElim(t) {
+  const P = { x: xs[ci + 2], y: ys[cj - 1] };
+  cam = { x: P.x - 60, y: P.y - 70, z: lerp(1.6, 2.0, eio(seg(t, 24, 27))), r: 0 };
+  if (t > 25.5) { cam.z += .15 * decay(t, 25.5, 4); }
+  drawMap(.08);
+  const eliminated = t >= 25.5;
+  // chasseur qui fonce
+  const path = { pts: [[P.x - 520, P.y], [P.x - 62, P.y]], cum: [0, 458] };
+  const d = 458 * eio(seg(t, 24, 25.4));
+  trail(path, d, 260, C.red);
+  const h = along(path, d), hs = w2s(h.x, h.y);
+  marker(hs.x, hs.y, C.red, { r: 18 });
+  // proie
+  const ps = w2s(P.x + (eliminated ? 0 : Math.sin(t * 9) * 3), P.y);
+  if (!eliminated) marker(ps.x, ps.y, C.blue, { r: 18 });
+  else {
+    marker(ps.x, ps.y, '#555', { r: 18, glow: 0 });
+    ctx.save(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(ps.x - 8, ps.y - 8); ctx.lineTo(ps.x + 8, ps.y + 8); ctx.moveTo(ps.x + 8, ps.y - 8); ctx.lineTo(ps.x - 8, ps.y + 8); ctx.stroke(); ctx.restore();
+    ripple(ps.x, ps.y, C.red, seg(t, 25.5, 26.3), 500);
+  }
+  // viseur qui verrouille
+  if (t < 25.7) {
+    const q = eo(seg(t, 24.2, 25.3));
+    const lockFlash = t > 25.3 ? (Math.floor(t * 20) % 2) : 1;
+    drawIcon(ps.x, ps.y, lerp(1.5, .32, q), 1, clamp(seg(t, 24.15, 24.4)) * lockFlash, lerp(-1.6, 0, q));
+  }
+  edgeGlow(C.red, .2 + .4 * decay(t, 25.5, 2));
+
+  if (!eliminated) {
+    slideText('CHOPE-LES.', 90, 160, 24.1, t, { size: 110, ls: -3 });
+    slideText('TOUS.', 90, 270, 24.4, t, { size: 110, color: C.red, glow: 30, ls: -3 });
+  } else {
+    // tampon ÉLIMINÉ
+    const sp = seg(t, 25.5, 25.72);
+    const sc = lerp(2.6, 1, eexp(sp));
+    ctx.save(); ctx.translate(W / 2, 330); ctx.rotate(-.12); ctx.scale(sc, sc); ctx.globalAlpha = clamp(sp * 4);
+    rrect(-470, -115, 940, 230, 24); ctx.fillStyle = 'rgba(15,15,15,.75)'; ctx.fill();
+    ctx.lineWidth = 14; ctx.strokeStyle = C.red; ctx.shadowColor = C.red; ctx.shadowBlur = 40; ctx.stroke();
+    ctx.shadowBlur = 0;
+    gtext('ÉLIMINÉ', 0, 6, { size: 170, color: C.red, glow: 30, ls: 4 }, glitchAmt(t));
+    ctx.restore();
+    // carte de confirmation
+    const cp = eback(seg(t, 25.95, 26.3));
+    if (cp > 0) {
+      ctx.save(); ctx.translate(W / 2, 860); ctx.scale(cp, cp);
+      rrect(-430, -110, 860, 220, 24); ctx.fillStyle = C.surface; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = C.border; ctx.stroke();
+      text('Léo t\'a touché ?', 0, -55, { size: 40, weight: 800 });
+      const pressed = t >= 26.5;
+      const bs = pressed ? 1 + .1 * decay(t, 26.5, 8) - .06 * Math.max(0, 1 - (t - 26.5) * 12) : 1;
+      ctx.save(); ctx.translate(-195, 35); ctx.scale(bs, bs);
+      rrect(-180, -42, 360, 84, 14); ctx.fillStyle = pressed ? C.green : rgba(C.green, .15); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = C.green; if (pressed) { ctx.shadowColor = C.green; ctx.shadowBlur = 30; } ctx.stroke();
+      ctx.restore();
+      text('✓ CONFIRMER', -195, 37, { size: 30, weight: 800, color: pressed ? '#0f0f0f' : C.green, ls: 2 });
+      rrect(15, -7, 360, 84, 14); ctx.lineWidth = 2; ctx.strokeStyle = C.border; ctx.stroke();
+      text('✗ CONTESTER', 195, 37, { size: 30, weight: 800, color: C.muted, ls: 2 });
+      ctx.restore();
+      if (pressed) ripple(W / 2 - 195, 895, C.green, seg(t, 26.5, 27), 300);
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  SCÈNE 9 — Outro (27 → 30 s)
+// ════════════════════════════════════════════════════════════
+const MARQUEE = '  CHAT D\'ÉQUIPE  ✦  ZONE DE JEU  ✦  JUSQU\'À 20 JOUEURS  ✦  PINGS GPS  ✦  RÔLES ALÉATOIRES  ✦  RÉCAP DE FIN DE PARTIE  ✦';
+function sOutro(t) {
+  bg();
+  radial(W / 2, 420, 1000, C.red, .18 + .12 * beatPulse(t));
+  gridBg(t, .04, 50);
+  // rayons
+  ctx.save(); ctx.translate(W / 2, 330); ctx.rotate(t * .25);
+  for (let k = 0; k < 12; k++) {
+    ctx.rotate(Math.PI / 6);
+    ctx.fillStyle = rgba(C.red, .035);
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(1400, -120); ctx.lineTo(1400, 120); ctx.fill();
+  }
+  ctx.restore();
+  drawIcon(W / 2, 290, .5 * (1 + .05 * beatPulse(t)), seg(t, 27, 27.55), 1, (1 - eo(seg(t, 27, 27.55))) * 1.5);
+  if (t >= 27.4) {
+    const sc = lerp(2, 1, eexp(seg(t, 27.4, 27.7)));
+    ctx.save(); ctx.translate(W / 2, 570); ctx.scale(sc, sc);
+    drawLogoText(0, 0, 190, glitchAmt(t), seg(t, 27.4, 27.5));
+    ctx.restore();
+  }
+  text('RASSEMBLE TA TEAM. LANCE LA CHASSE.', W / 2, 700, { size: 44, weight: 800, ls: 4, alpha: eo(seg(t, 27.8, 28.1)) });
+  const cp = eback(seg(t, 28.15, 28.5));
+  if (cp > 0) {
+    ctx.save(); ctx.translate(W / 2, 830); const s = cp * (1 + .04 * beatPulse(t)); ctx.scale(s, s);
+    rrect(-300, -55, 600, 110, 55); ctx.fillStyle = C.red; ctx.shadowColor = C.red; ctx.shadowBlur = 40 + 30 * beatPulse(t); ctx.fill();
+    ctx.restore();
+    text('JOUE MAINTENANT', W / 2, 832, { size: 48, color: '#fff', ls: 2, alpha: clamp(cp) });
+  }
+  text('Gratuit · Sans inscription · Direct dans ton navigateur', W / 2, 935, { size: 26, weight: 600, color: C.muted, alpha: eo(seg(t, 28.5, 28.8)) });
+  // bandeau défilant
+  const mp = eo(seg(t, 27.2, 27.6));
+  ctx.save(); ctx.globalAlpha = mp;
+  ctx.fillStyle = C.surface; ctx.fillRect(0, H - 70, W, 70);
+  ctx.fillStyle = C.red; ctx.fillRect(0, H - 70, W, 3);
+  ctx.font = fnt(26, 800); setLS(ctx, 4);
+  const mw = ctx.measureText(MARQUEE).width;
+  const off = -((t - 27) * 260) % mw;
+  ctx.textBaseline = 'middle'; ctx.fillStyle = C.text;
+  for (let x = off; x < W; x += mw) ctx.fillText(MARQUEE, x, H - 34);
+  ctx.restore();
+}
+
+// ════════════════════════════════════════════════════════════
+//  Compositing final
+// ════════════════════════════════════════════════════════════
+const SCENES = [[0, 3, sIntro], [3, 6, sKinetic], [6, 9.5, sLobby], [9.5, 13, sRoles], [13, 16, sGrace], [16, 21, sLive], [21, 24, sOutZone], [24, 27, sElim], [27, 30.5, sOutro]];
+const grain = document.createElement('canvas');
+grain.width = grain.height = 256;
+(() => {
+  const g = grain.getContext('2d'), img = g.createImageData(256, 256);
+  for (let i = 0; i < img.data.length; i += 4) { const v = Math.random() * 255; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; img.data[i + 3] = 255; }
+  g.putImageData(img, 0, 0);
+})();
+const grainPattern = out.createPattern(grain, 'repeat');
+
+function render(t) {
+  ctx = buf.getContext('2d');
+  ctx.save();
+  const sc = SCENES.find(([a, b]) => t >= a && t < b) || SCENES[SCENES.length - 1];
+  sc[2](t);
+  ctx.restore();
+
+  // Composition : shake + zoom au beat + glitch par tranches aux cuts
+  out.save();
+  out.fillStyle = C.bg; out.fillRect(0, 0, W, H);
+  const sh = 22 * impactAt(t, 9);
+  const zx = 1 + .012 * beatPulse(t) + .02 * impactAt(t, 7);
+  out.translate(W / 2 + (hash(t * 97) - .5) * sh, H / 2 + (hash(t * 89 + 3) - .5) * sh);
+  out.scale(zx, zx);
+  out.translate(-W / 2, -H / 2);
+  const cut = CUTS.reduce((m, c) => Math.max(m, decay(t, c, 16) * (t - c < .25 ? 1 : 0)), 0);
+  if (cut > .05) {
+    const n = 14;
+    for (let i = 0; i < n; i++) {
+      const y0 = Math.floor(i * H / n), h = Math.ceil(H / n);
+      const dx = (hash(i * 13 + Math.floor(t * 30)) - .5) * 260 * cut;
+      out.drawImage(buf, 0, y0, W, h, dx, y0, W, h);
+    }
+  } else out.drawImage(buf, 0, 0);
+  out.restore();
+
+  // flash
+  const fl = Math.min(.9, .55 * impactAt(t, 14) + CUTS.reduce((s, c) => s + .4 * decay(t, c, 20), 0));
+  if (fl > .01) { out.fillStyle = `rgba(255,255,255,${fl})`; out.fillRect(0, 0, W, H); }
+  // vignette
+  const v = out.createRadialGradient(W / 2, H / 2, H * .45, W / 2, H / 2, W * .72);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.55)');
+  out.fillStyle = v; out.fillRect(0, 0, W, H);
+  // grain
+  out.save(); out.globalAlpha = .05; out.globalCompositeOperation = 'overlay';
+  out.translate(Math.floor(hash(t * 31) * 256), Math.floor(hash(t * 17) * 256));
+  out.fillStyle = grainPattern; out.fillRect(-256, -256, W + 512, H + 512);
+  out.restore();
+  // scanline
+  const sy = ((t * .35) % 1) * H;
+  out.fillStyle = 'rgba(255,68,68,.04)'; out.fillRect(0, sy - 3, W, 6);
+  // fondu final
+  const fo = seg(t, 29.45, 30);
+  if (fo > 0) { out.fillStyle = `rgba(0,0,0,${fo})`; out.fillRect(0, 0, W, H); }
+}
+
+// ════════════════════════════════════════════════════════════
+//  BANDE-SON — Web Audio API, 120 BPM (1 temps = 0,5 s)
+// ════════════════════════════════════════════════════════════
+function buildAudio(ac, dest) {
+  const T0 = ac.currentTime + .15;
+  const at = t => T0 + t;
+  const master = ac.createGain(); master.gain.value = .8;
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.ratio.value = 5; comp.attack.value = .003; comp.release.value = .15;
+  // Soft-clip final (tanh) : empêche les impacts d'écrêter
+  const pre = ac.createGain(); pre.gain.value = .7;
+  const clip = ac.createWaveShaper(), curve = new Float32Array(2048);
+  for (let i = 0; i < curve.length; i++) { const x = i / (curve.length - 1) * 2 - 1; curve[i] = Math.tanh(1.6 * x) / Math.tanh(1.6) * .95; }
+  clip.curve = curve; clip.oversample = '4x';
+  master.connect(comp); comp.connect(pre).connect(clip).connect(dest);
+  master.gain.setValueAtTime(.8, at(29.2)); master.gain.linearRampToValueAtTime(0, at(30));
+  // Delay (croche pointée)
+  const delay = ac.createDelay(1); delay.delayTime.value = .375;
+  const fb = ac.createGain(); fb.gain.value = .35;
+  const wet = ac.createGain(); wet.gain.value = .3;
+  delay.connect(fb).connect(delay); delay.connect(wet).connect(master);
+  // Bus musique (pour couper/filtrer pendant le breakdown)
+  const music = ac.createBiquadFilter(); music.type = 'lowpass'; music.frequency.value = 18000;
+  music.connect(master);
+  music.frequency.setValueAtTime(18000, at(12.5)); music.frequency.exponentialRampToValueAtTime(600, at(13));
+  music.frequency.setValueAtTime(600, at(14.9)); music.frequency.exponentialRampToValueAtTime(18000, at(15));
+  music.frequency.setValueAtTime(18000, at(24.2)); music.frequency.exponentialRampToValueAtTime(500, at(25.4));
+  music.frequency.setValueAtTime(18000, at(25.5));
+
+  const nb = ac.createBuffer(1, ac.sampleRate * 2, ac.sampleRate);
+  const nd = nb.getChannelData(0); for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+  function env(g, t, a, peak, dec) {
+    g.gain.setValueAtTime(.0001, t);
+    g.gain.linearRampToValueAtTime(peak, t + a);
+    g.gain.exponentialRampToValueAtTime(.0001, t + a + dec);
+  }
+  function kick(t, v = 1, bus = music) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(170, at(t)); o.frequency.exponentialRampToValueAtTime(44, at(t) + .13);
+    env(g, at(t), .002, v, .38);
+    o.connect(g).connect(bus); o.start(at(t)); o.stop(at(t) + .5);
+  }
+  function noise(t, dur, type, freq, q, v, a = .002, bus = music) {
+    const s = ac.createBufferSource(); s.buffer = nb;
+    const f = ac.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+    const g = ac.createGain(); env(g, at(t), a, v, dur);
+    s.connect(f).connect(g).connect(bus);
+    s.start(at(t), Math.random()); s.stop(at(t) + a + dur + .05);
+    return f;
+  }
+  const hat = (t, v = .12) => noise(t, .045, 'highpass', 8000, .7, v);
+  const ohat = (t, v = .1) => noise(t, .18, 'highpass', 7000, .7, v);
+  const clap = (t, v = .45) => { noise(t, .16, 'bandpass', 1700, .9, v); noise(t + .012, .12, 'bandpass', 2200, .9, v * .6); };
+  function tone(t, f, dur, { type = 'sine', v = .2, a = .005, bus = master, send = 0, cutoff = 0 } = {}) {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, at(t));
+    let node = o;
+    if (cutoff) { const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = cutoff; o.connect(lp); node = lp; }
+    env(g, at(t), a, v, dur);
+    node.connect(g); g.connect(bus);
+    if (send) { const s = ac.createGain(); s.gain.value = send; g.connect(s).connect(delay); }
+    o.start(at(t)); o.stop(at(t) + a + dur + .05);
+    return o;
+  }
+  function bass(t, f, dur = .22, v = .32) {
+    const o = ac.createOscillator(), o2 = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+    o.type = 'sawtooth'; o2.type = 'square'; o.frequency.value = f; o2.frequency.value = f / 2;
+    lp.type = 'lowpass'; lp.Q.value = 6;
+    lp.frequency.setValueAtTime(1400, at(t)); lp.frequency.exponentialRampToValueAtTime(180, at(t) + dur);
+    env(g, at(t), .004, v, dur);
+    o.connect(lp); o2.connect(lp); lp.connect(g).connect(music);
+    o.start(at(t)); o2.start(at(t)); o.stop(at(t) + dur + .1); o2.stop(at(t) + dur + .1);
+  }
+  function pad(t, freqs, dur, v = .05) {
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(.0001, at(t)); g.gain.linearRampToValueAtTime(v, at(t) + .3);
+    g.gain.setValueAtTime(v, at(t) + dur - .2); g.gain.linearRampToValueAtTime(.0001, at(t) + dur);
+    lp.connect(g).connect(master);
+    freqs.forEach(f => [-7, 7].forEach(det => {
+      const o = ac.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = det;
+      o.connect(lp); o.start(at(t)); o.stop(at(t) + dur + .05);
+    }));
+  }
+  function riser(t0, t1, v = .3) {
+    const s = ac.createBufferSource(); s.buffer = nb; s.loop = true;
+    const f = ac.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
+    f.frequency.setValueAtTime(300, at(t0)); f.frequency.exponentialRampToValueAtTime(7000, at(t1));
+    const g = ac.createGain(); g.gain.setValueAtTime(.0001, at(t0)); g.gain.exponentialRampToValueAtTime(v, at(t1) - .02); g.gain.linearRampToValueAtTime(0, at(t1));
+    s.connect(f).connect(g).connect(master); s.start(at(t0)); s.stop(at(t1) + .05);
+    const o = ac.createOscillator(), og = ac.createGain(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(110, at(t0)); o.frequency.exponentialRampToValueAtTime(880, at(t1));
+    og.gain.setValueAtTime(.0001, at(t0)); og.gain.exponentialRampToValueAtTime(v * .25, at(t1) - .02); og.gain.linearRampToValueAtTime(0, at(t1));
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2500;
+    o.connect(lp).connect(og).connect(master); o.start(at(t0)); o.stop(at(t1) + .05);
+  }
+  function impact(t, v = 1) {
+    kick(t, 1.2 * v, master);
+    noise(t, 1.4, 'lowpass', 4000, .5, .45 * v, .002, master);
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(90, at(t)); o.frequency.exponentialRampToValueAtTime(28, at(t) + 1.2);
+    env(g, at(t), .005, .9 * v, 1.4);
+    o.connect(g).connect(master); o.start(at(t)); o.stop(at(t) + 1.6);
+  }
+  function hit(t, v = .6) { kick(t, v, master); noise(t, .35, 'bandpass', 2500, .6, .35 * v, .002, master); }
+  function whoosh(t, v = .25) {
+    const f = noise(t, .28, 'bandpass', 600, 2, v, .08, master);
+    f.frequency.setValueAtTime(500, at(t)); f.frequency.exponentialRampToValueAtTime(4000, at(t) + .3);
+  }
+  const blip = (t, f, v = .18) => tone(t, f, .09, { type: 'triangle', v });
+  const tick = t => tone(t, 2200 + Math.random() * 600, .025, { type: 'square', v: .05, cutoff: 5000 });
+  const sonar = t => { tone(t, 1480, .7, { v: .22, send: .7 }); tone(t, 2960, .25, { v: .05 }); };
+  const alarm = (t, f, v = .09) => tone(t, f, .16, { type: 'square', v, a: .004, cutoff: 3500 });
+
+  // ── Harmonie : Am · F · C · E (1 mesure = 2 s)
+  const PROG = [
+    { bass: 55.00, pad: [220, 261.63, 329.63], arp: [440, 523.25, 659.25, 880] },
+    { bass: 43.65, pad: [174.61, 220, 261.63], arp: [349.23, 440, 523.25, 698.46] },
+    { bass: 65.41, pad: [196, 261.63, 329.63], arp: [392, 523.25, 659.25, 783.99] },
+    { bass: 41.20, pad: [164.81, 207.65, 246.94], arp: [329.63, 415.30, 493.88, 659.25] },
+  ];
+  for (let bar = 0; bar < 15; bar++) {
+    const ch = PROG[bar % 4], t = bar * 2;
+    pad(t, ch.pad, 2, bar === 6 || bar === 7 ? .07 : .04);
+  }
+  for (let b = 0; b < 60; b++) {
+    const t = b * .5, ch = PROG[Math.floor(t / 2) % 4];
+    if (musicOn(t)) {
+      kick(t, .95);
+      bass(t + .25, ch.bass * 2);
+      if (t >= 15) bass(t + .375, ch.bass * 2, .1, .2);
+      hat(t + .25, .14);
+      if (t >= 15 && t < 25) { hat(t + .125, .06); hat(t + .375, .06); }
+      if (t >= 6 && b % 2 === 1) clap(t);
+      if (b % 8 === 7) ohat(t + .25);
+      if ((t >= 6 && t < 12.5) || (t >= 15 && t < 24) || (t >= 25.5 && t < 27)) {
+        for (let k = 0; k < 4; k++) {
+          const n = ch.arp[[0, 2, 1, 3][(b * 4 + k) % 4]];
+          tone(t + k * .125, n, .1, { type: 'square', v: .035, cutoff: 2600, send: .25 });
+        }
+      }
+    }
+  }
+  // Lead « hook » sur le drop
+  [[15, 880], [15.75, 783.99], [16.5, 659.25], [17, 523.25], [17.5, 659.25], [19, 698.46], [19.75, 659.25], [20.5, 523.25]].forEach(([t, f]) =>
+    tone(t, f, .35, { type: 'sawtooth', v: .05, cutoff: 3000, send: .35, bus: music }));
+
+  // ── Sound design calé sur l'image
+  riser(0, 1.5, .25); impact(1.5, 1);
+  for (let k = 0; k < 4; k++) tick(2.05 + k * .14);
+  hit(3, .5); hit(4, .5); hit(5, .8);
+  CUTS.forEach(c => whoosh(c - .2, .2));
+  for (let k = 0; k < 6; k++) { for (let j = 0; j < 4; j++) tick(6.1 + k * .16 + j * .04); blip(6.4 + k * .16, 1200 + k * 80, .1); }
+  PLAYERS.forEach((_, k) => blip(7.0 + k * .36, [523.25, 659.25, 783.99, 880, 1046.5, 1318.5][k], .16));
+  for (let k = 0; k < 8; k++) blip(9.6 + k * .06, k % 2 ? 660 : 880, .06);
+  PLAYERS.forEach((_, k) => whoosh(10.15 + k * .2, .12));
+  impact(11.5, .8);
+  riser(13, 15, .3);
+  [[13.5, 660], [14, 660], [14.5, 660]].forEach(([t, f]) => { tone(t, f, .25, { type: 'square', v: .12, cutoff: 3000 }); });
+  impact(15, 1.1);
+  PINGS.forEach(sonar);
+  for (let t = 21; t < 22.5; t += .25) alarm(t, Math.round((t - 21) * 4) % 2 ? 660 : 880);
+  hit(22.5, .8);
+  for (let t = 22.5; t < 24; t += .125) alarm(t, Math.round((t - 22.5) * 8) % 2 ? 784 : 1175, .08);
+  riser(24, 25.5, .3);
+  [24.3, 24.6, 24.85, 25.05, 25.2, 25.32, 25.42].forEach(t => tone(t, 1800, .04, { type: 'square', v: .07, cutoff: 6000 }));
+  impact(25.5, 1.2);
+  tone(26.5, 880, .12, { type: 'triangle', v: .18 }); tone(26.6, 1318.5, .25, { type: 'triangle', v: .18, send: .4 });
+  impact(27, 1); hit(27.4, .6);
+  pad(27, [220, 261.63, 329.63, 440], 3, .07);
+  [[28, 440], [28.25, 523.25], [28.5, 659.25], [28.75, 880]].forEach(([t, f]) => tone(t, f, .5, { type: 'sawtooth', v: .05, cutoff: 3000, send: .4 }));
+  impact(29.5, .5);
+  return T0;
+}
+
+// ════════════════════════════════════════════════════════════
+//  Lecture / enregistrement
+// ════════════════════════════════════════════════════════════
+const overlay = document.getElementById('overlay');
+const btnPlay = document.getElementById('btnPlay');
+const btnRec = document.getElementById('btnRec');
+const prog = document.getElementById('prog');
+const status = document.getElementById('status');
+const dl = document.getElementById('dl');
+let ac = null, raf = 0, playing = false;
+
+function play(record = false) {
+  if (playing) return;
+  playing = true;
+  btnPlay.disabled = btnRec.disabled = true;
+  overlay.hidden = true; dl.hidden = true;
+  if (ac) ac.close();
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  let dest = ac.destination, recorder = null, chunks = [];
+  if (record) {
+    const msd = ac.createMediaStreamDestination();
+    const split = ac.createGain(); split.connect(ac.destination); split.connect(msd);
+    dest = split;
+    const stream = new MediaStream([...canvas.captureStream(60).getVideoTracks(), ...msd.stream.getAudioTracks()]);
+    const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 16e6 });
+    recorder.ondataavailable = e => e.data.size && chunks.push(e.data);
+    recorder.onstop = () => {
+      const url = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+      dl.href = url; dl.download = 'manhunt-trailer.webm'; dl.hidden = false;
+      status.textContent = 'Vidéo prête ✔';
+    };
+    recorder.start(250);
+  }
+  const T0 = buildAudio(ac, dest);
+  status.textContent = record ? '● Enregistrement…' : 'Lecture…';
+  const frame = () => {
+    const t = Math.max(0, ac.currentTime - T0);
+    render(Math.min(t, DURATION - .001));
+    prog.style.width = (100 * t / DURATION) + '%';
+    if (t < DURATION + .2) raf = requestAnimationFrame(frame);
+    else {
+      playing = false; btnPlay.disabled = btnRec.disabled = false;
+      if (recorder) recorder.stop(); else status.textContent = '30 s · 1920×1080';
+      overlay.hidden = false;
+    }
+  };
+  raf = requestAnimationFrame(frame);
+}
+btnPlay.onclick = () => play(false);
+overlay.onclick = () => play(false);
+btnRec.onclick = () => play(true);
+document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); play(false); } });
+
+// Aperçu : ?t=12.3 fige une image (utile pour vérifier une scène)
+window.render = render;
+const qt = parseFloat(new URLSearchParams(location.search).get('t'));
+const poster = () => render(isNaN(qt) ? 28.9 : qt);
+if (!isNaN(qt)) overlay.hidden = true;
+(document.fonts ? document.fonts.ready : Promise.resolve()).then(poster);
+poster();
+</script>
+</body>
+</html>

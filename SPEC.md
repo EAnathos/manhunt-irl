@@ -113,7 +113,7 @@ classDiagram
 | RG-09 | Confirmation d'élimination | Une Élimination doit être confirmée par la Proie pour être effective. Sans réponse dans un délai de 60 s, l'Hôte arbitre. |
 | RG-10 | Fin de partie automatique | La Partie se termine automatiquement si toutes les Proies sont ÉLIMINÉES ou si le chronomètre atteint 0. |
 | RG-11 | Hors zone | Une Proie qui sort de la Zone de jeu reçoit une alerte avec vibrations et notifications toutes les 2 s. Deux phases : **Avertissement** (0-15 s) — la Proie doit revenir ; **Critique** (15-30 s) — la position de la Proie est publiée aux Chasseurs chaque seconde. Après 30 s hors zone, la Proie est automatiquement éliminée. |
-| RG-12 | Reconnexion | Un Joueur déconnecté pendant moins de 120 s peut se reconnecter à la Partie en cours sans pénalité. Au-delà, il est considéré DÉCONNECTÉ et ne participe plus activement. |
+| RG-12 | Reconnexion | Un Joueur déconnecté pendant moins de 120 s peut se reconnecter à la Partie en cours sans pénalité. Au-delà, il est considéré DÉCONNECTÉ et ne participe plus activement (il reçoit tout de même l'état de la partie). Le code de partie est affiché en permanence pendant la partie : un Joueur qui a perdu sa session (app fermée, autre appareil) peut rejoindre une Partie EN\_COURS ou TERMINÉE en saisissant le code et **le même pseudo**, à condition que ce joueur ne soit pas déjà connecté. L'accueil propose aussi « Reprendre la partie » si une session est mémorisée. |
 | RG-13 | Fréquence de ping GPS | La position des Proies est transmise au serveur à une fréquence configurable par l'Hôte avant le démarrage (valeur par défaut : 2 min, minimum : 3 s, maximum : 20 min). La position des Chasseurs est transmise en continu sans intervalle configurable. |
 | RG-14 | Historique de positions | Les positions sont conservées en mémoire RAM pendant la durée de la Partie uniquement. Elles sont purgées 5 minutes après la fin de la Partie (pas de persistance disque). |
 | RG-15 | Contenu des règles piloté par JSON | Le texte affiché dans la section « Règles du jeu » est lu depuis un fichier rules.json statique. Toute modification de ce fichier est reflétée sans redéploiement du code applicatif. |
@@ -122,8 +122,13 @@ classDiagram
 | RG-18 | Historique des positions exportable | Les positions GPS de tous les joueurs sont conservées en mémoire pendant la durée de la partie. À la fin de la partie, l'historique complet est inclus dans le récapitulatif et peut être exporté par les joueurs (format JSON ou GPX). |
 | RG-19 | Chat en jeu | Les joueurs disposent d'espaces de conversation textuels séparés par canal : Proies uniquement, Chasseurs uniquement, et Tous. Un joueur ne voit que les canaux correspondant à son rôle (une Proie ne voit pas le canal Chasseurs et inversement). |
 | RG-20 | Objectifs de partie (mode grande partie) | L'Hôte peut activer un mode « objectifs » proposant une liste de missions secondaires aux Proies et/ou aux Chasseurs. La victoire peut être conditionnée à la complétion d'objectifs en plus de la survie / capture. |
-| RG-22 | Affichage du délai de grâce | Pendant le délai de grâce, un compte à rebours est affiché à tous les joueurs. Les Chasseurs voient le temps restant avant de pouvoir partir à la chasse. Les Proies voient le temps restant pour se cacher. |
-| RG-23 | Carte interactive | Les positions des joueurs sont affichées sur une carte interactive (Leaflet + OpenStreetMap). Les Chasseurs sont représentés par des marqueurs rouges, les Proies par des marqueurs bleus. La zone de jeu, si définie, est affichée en surimpression. Chaque joueur voit sa propre position. Les Proies ne voient que leur propre marqueur. |
+| RG-22 | Affichage du délai de grâce | Pendant le délai de grâce, un compte à rebours est affiché à tous les joueurs. Les Chasseurs voient le temps restant avant de pouvoir partir à la chasse. Les Proies voient le temps restant pour se cacher. Les comptes à rebours sont calculés sur l'horloge du serveur (décalage horloge client/serveur compensé via `serverNow`) et arrondis au supérieur, pour atteindre 00:00 exactement quand le serveur déclenche l'événement. Les durées de configuration sont affichées sans arrondi (ex. `1min30s`) et acceptent les formats composés (`1min30`, `1h30`, `90`, `1,5min`). |
+| RG-23 | Carte interactive | Les positions des joueurs sont affichées sur une carte interactive (Leaflet + OpenStreetMap). Les Chasseurs sont représentés par des marqueurs rouges, les Proies par des marqueurs bleus. La zone de jeu, si définie, est affichée en surimpression. Chaque joueur voit sa propre position. Les Proies ne voient que leur propre marqueur. En partie, le chronomètre est affiché en haut à gauche (couleur du rôle), le code de partie en haut à droite (copiable) ; le rôle est rappelé dans le panneau du bas. |
+| RG-24 | Informations de ping | À chaque ping programmé, le serveur envoie à tous les joueurs l'heure du dernier et du prochain ping (`prey_ping_status`). Les Chasseurs voient « Ping des proies » avec son compte à rebours. Chaque Proie reçoit en plus (et elle seule) la position qui a été révélée aux Chasseurs. La Proie voit un compte à rebours « Prochain ping », le temps écoulé depuis le dernier ping, sa distance à ce point, et un marqueur (cercle bleu pointillé) sur la carte. Les révélations hors zone (RG-11) ne comptent pas comme pings programmés. |
+| RG-25 | Orientation de la carte | Le marqueur du joueur affiche un cône indiquant la direction du téléphone (boussole de l'appareil). Un bouton permet de basculer entre « Nord » (carte fixe, nord en haut) et « Boussole » (la carte tourne selon l'orientation du téléphone et suit le joueur). Sur iOS, la permission d'orientation est demandée au premier toucher. |
+| RG-26 | Regroupement en fin de partie | À la fin de la Partie, le serveur calcule un point de rendez-vous (centre des dernières positions connues de tous les joueurs, à défaut le centre de la zone). Jusqu'à la purge (5 min), les positions de tous les joueurs, éliminés compris, sont diffusées à tous toutes les 2 s. L'écran de fin affiche une carte avec chaque joueur nommé, le point de rendez-vous et la distance du joueur à ce point. |
+| RG-27 | Musique d'ambiance | La musique (`hunted.mp3`, en boucle) est toujours active pendant la partie et ne peut pas être coupée depuis l'application. Si le navigateur bloque la lecture automatique, elle démarre au premier toucher ; elle reprend au retour au premier plan et s'arrête à la fin de la partie. Elle passe par un nœud de gain Web Audio (iOS ignore `audio.volume`) et baisse automatiquement (≈ 0,04) tant qu'un joueur parle au chat vocal, y compris soi-même, puis remonte en fondu. |
+| RG-28 | Chat vocal (talkie-walkie) | Pendant la partie, deux boutons « maintenir pour parler » : **Équipe** (canal Proies ou Chasseurs selon le rôle) et **Tous**. Mêmes règles de canal que le chat écrit (RG-19), contrôlées côté serveur ; l'audio n'est jamais renvoyé à l'émetteur. Audio relayé par le WebSocket du jeu (pas de WebRTC : fonctionne en 4G sans serveur TURN) au format 16 kHz mono G.711 µ-law (≈ 16 Ko/s), par paquets d'≈ 85 ms, joué avec un tampon de 150 ms. Prise de parole limitée à 30 s ; le micro est libéré au relâchement (sur iOS un micro ouvert bascule le son en mode « appel »). Un indicateur affiche qui parle et sur quel canal. Rien n'est enregistré côté serveur. |
 
 ## 4. Exigences fonctionnelles
 
@@ -133,7 +138,7 @@ classDiagram
 | --- | --- | --- | --- |
 | EF-01 | Choisir un pseudo et obtenir une session anonyme | MUST | — |
 | EF-02 | Créer une partie et obtenir un code | MUST | RG-01 |
-| EF-03 | Rejoindre une partie via code | MUST | RG-01 |
+| EF-03 | Rejoindre une partie via code (y compris en cours, avec le même pseudo) | MUST | RG-01, RG-12 |
 | EF-04 | Configurer les paramètres de la partie (durée, zone, délai de grâce, intervalle de ping GPS) | MUST | RG-06, RG-13 |
 | EF-05 | Assigner les rôles manuellement ou aléatoirement | MUST | RG-04, RG-16 |
 | EF-06 | Démarrer la partie (Hôte uniquement) | MUST | RG-02, RG-05 |
@@ -153,6 +158,12 @@ classDiagram
 | EF-20 | Chat en jeu (canaux Proies / Chasseurs / Tous) | SHOULD | RG-19 |
 | EF-21 | Mode objectifs pour les grandes parties | COULD | RG-20 |
 | EF-23 | Afficher le compte à rebours du délai de grâce | MUST | RG-22 |
+| EF-24 | Afficher le prochain ping à tous (et le dernier ping révélé à chaque Proie) | MUST | RG-24 |
+| EF-25 | Orienter la carte (cône de direction, mode Nord / Boussole) | SHOULD | RG-25 |
+| EF-26 | Carte de fin de partie avec positions de tous et point de rendez-vous | MUST | RG-26 |
+| EF-27 | Musique d'ambiance permanente | SHOULD | RG-27 |
+| EF-28 | Installation PWA guidée (bouton Android, instructions iOS) | MUST | ENF-09 |
+| EF-29 | Chat vocal talkie-walkie (Équipe / Tous) avec baisse de la musique | SHOULD | RG-27, RG-28 |
 
 ### 4.2. Fiche d'exigence détaillée
 
@@ -259,7 +270,7 @@ classDiagram
 | ENF-06 | Sécurité | Confidentialité des positions | La position des Proies est transmise aux Chasseurs uniquement à l'intervalle configuré. Les Proies ne reçoivent jamais la position des Chasseurs ni des autres Proies (contrôle serveur). |
 | ENF-07 | Sécurité | Identification anonyme | Aucune authentification formelle. Le Joueur choisit un pseudo à l'entrée ; une session anonyme est créée côté serveur (ex. ID de session HTTP ou token opaque non signé) pour identifier les échanges d'une même partie. |
 | ENF-08 | Facilité d'utilisation | Création + rejoindre une partie | Flux complet en ≤ 2 minutes pour un nouvel utilisateur sans aide. |
-| ENF-09 | Compatibilité | Plateformes cibles | Navigateurs cibles : Chrome Android (toutes versions récentes) et Safari iOS ≥ 16.4. Accessible via URL, installable en PWA sans store. |
+| ENF-09 | Compatibilité | Plateformes cibles | Navigateurs cibles : Chrome Android (toutes versions récentes) et Safari iOS ≥ 16.4. Accessible via URL, installable en PWA sans store. Android : bouton « Installer l'application » (`beforeinstallprompt`, Service Worker requis). iOS : Safari n'offre aucune invite automatique, l'accueil affiche donc les instructions « Partager → Sur l'écran d'accueil » (meta `apple-mobile-web-app-*`, `apple-touch-icon` 180×180). La géolocalisation iOS gère les erreurs transitoires (repli basse précision, relance du suivi) et affiche les réglages à vérifier en cas de refus. |
 | ENF-10 | Compatibilité | Réseau | Fonctionnement nominal sur réseau 4G (débit ≥ 1 Mbps symétrique). |
 | ENF-11 | Maintenabilité | Couverture de tests | Couverture unitaire ≥ 70 % des modules serveur critiques (géolocalisation, élimination). |
 | ENF-12 | Portabilité | Déploiement | La PWA est accessible via une URL publique hébergée sur un serveur web (VPS, CDN). Aucune soumission store n'est requise ni prévue. |
@@ -271,6 +282,8 @@ classDiagram
 | Couche | Technologie | Justification |
 | --- | --- | --- |
 | Frontend | SvelteKit (PWA) | Bundle léger, réactivité native adaptée au temps réel, cold load rapide sur mobile |
+| Carte | Leaflet + `leaflet-rotate` | OpenStreetMap ; `leaflet-rotate` ajoute la rotation de carte (mode Boussole, RG-25) |
+| Service Worker | `src/service-worker.ts` | Rend l'app installable et met en cache le shell applicatif ; API et WebSocket jamais mis en cache |
 | Backend | Fastify (Node.js / TypeScript) | Performant, WebSocket natif via `@fastify/websocket`, stack déjà maîtrisée |
 | Temps réel | WebSockets (ws) | Bidirectionnel obligatoire : les Chasseurs émettent et reçoivent en continu |
 | Persistance | Aucune BDD :  état en mémoire (RAM) | Données éphémères (durée max d'une partie) ; zéro dépendance externe |
@@ -346,7 +359,7 @@ interface Partie {
 const parties = new Map<string, Partie>();
 ```
 
-Lorsqu'une partie passe en statut `TERMINÉE`, son entrée est supprimée de la `Map` après un délai de 5 minutes (le temps que les joueurs consultent le résumé).
+Lorsqu'une partie passe en statut `TERMINÉE`, son entrée est supprimée de la `Map` après un délai de 5 minutes (le temps que les joueurs consultent le résumé et se regroupent, RG-26).
 
 ### 6.4. Gestion des WebSockets
 
@@ -482,8 +495,13 @@ L'icône de l'application représente une cible / viseur (crosshair) stylisée :
 | --- | --- |
 | `icon.svg` | Source vectorielle, favicon SVG |
 | `icon-192.png` | PWA manifest (taille 192×192) |
-| `icon-512.png` | PWA manifest (taille 512×512) |
-| `icon-wide.svg` | Logo horizontal avec texte « ManHunt » — pour les écrans de chargement, partage social, en-têtes paysage |
+| `icon-512.png` | PWA manifest (taille 512×512, aussi déclarée `maskable`) |
+| `apple-touch-icon.png` | Icône écran d'accueil iOS (180×180) |
+| `icon-wide.svg` | Logo horizontal avec texte « ManHunt » — partage social, en-têtes paysage |
+
+**Écran de démarrage (splash)** : intégré en HTML/SVG inline dans `app.html` (affiché avant le chargement du JS, sans image externe). Le viseur s'anime anneau par anneau avec une onde radar, sur un halo rouge radial tramé d'un léger grain (évite les bandes du dégradé sombre). Affichage minimum 1,1 s, puis sortie en fondu + flou ; le contenu de la page entre ensuite (classe `html.app-ready`, éléments `.reveal`), sans chevauchement des deux logos. L'accueil reprend le même viseur (`Logo.svelte`) et le même mot-symbole pour la continuité.
+
+**Zones sûres iOS** : `viewport-fit=cover` + barre d'état translucide ; tous les éléments fixes (chrono, boutons, panneau du bas, chat, talkie-walkie) sont décalés via `env(safe-area-inset-*)` (variables `--safe-top` / `--safe-bottom`).
 
 ### 8.2. Charte couleurs
 

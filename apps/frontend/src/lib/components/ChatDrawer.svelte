@@ -153,7 +153,7 @@
 <style>
   .chat-toggle {
     position: fixed;
-    top: 16px;
+    top: calc(16px + var(--safe-top));
     right: 16px;
     z-index: 80;
     width: 48px;
@@ -215,6 +215,8 @@
     top: 0;
     right: 0;
     bottom: 0;
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
     width: min(85vw, 360px);
     background: var(--bg);
     z-index: 120;

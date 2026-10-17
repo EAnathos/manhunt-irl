@@ -16,6 +16,8 @@ import {
   handleReconnect,
   handleChatMessage,
   recordPosition,
+  sendPingStatus,
+  handleVoice,
 } from '../engine.js';
 
 export async function wsRoutes(app: FastifyInstance) {
@@ -50,8 +52,9 @@ export async function wsRoutes(app: FastifyInstance) {
     if (player.status === 'DECONNECTE') {
       handleReconnect(game, sessionId);
     } else {
-      sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game) });
+      sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game), serverNow: Date.now() });
     }
+    sendPingStatus(game, sessionId);
 
     if (game.status === 'LOBBY') {
       broadcastToAll(game, { type: 'player_joined', player: playerSnapshot(player) });
@@ -82,6 +85,11 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
 
   switch (msg.type) {
     case 'position': {
+      // After the game, everyone (eliminated included) shares their position to regroup.
+      if (game.status === 'TERMINEE') {
+        recordPosition(game, sessionId, msg.latitude, msg.longitude);
+        return;
+      }
       if (game.status !== 'EN_COURS') return;
       if (player.status !== 'LIBRE') return;
       recordPosition(game, sessionId, msg.latitude, msg.longitude);
@@ -223,6 +231,24 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
       if (!handleChatMessage(game, sessionId, msg.channel, msg.text)) {
         sendToPlayer(sessionId, { type: 'error', message: 'Cannot send message' });
       }
+      break;
+    }
+
+    case 'voice_chunk': {
+      if (typeof msg.data !== 'string' || typeof msg.seq !== 'number') return;
+      handleVoice(game, sessionId, msg.channel, {
+        type: 'voice_chunk',
+        sessionId,
+        pseudo: player.pseudo,
+        channel: msg.channel,
+        seq: msg.seq,
+        data: msg.data,
+      });
+      break;
+    }
+
+    case 'voice_end': {
+      handleVoice(game, sessionId, msg.channel, { type: 'voice_end', sessionId });
       break;
     }
 

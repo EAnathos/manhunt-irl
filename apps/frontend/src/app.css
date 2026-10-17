@@ -12,7 +12,10 @@
   --success: #44cc44;
   --warning: #ffaa00;
   --radius: 8px;
-  --font: 'Inter', -apple-system, system-ui, sans-serif;
+  --font: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
+  /* iPhone notch / home indicator (needs viewport-fit=cover) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -27,6 +30,28 @@ html, body {
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Page entrance, synced with the splash leaving (html.app-ready is set by app.html) */
+.reveal {
+  opacity: 0;
+}
+.app-ready .reveal {
+  animation: reveal 0.55s var(--d, 0s) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-ready .reveal { animation: none; opacity: 1; }
+}
+
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 button {
@@ -37,7 +62,7 @@ button {
   padding: 0.75rem 1.5rem;
   border-radius: var(--radius);
   font-weight: 600;
-  transition: background 0.15s;
+  transition: background 0.15s, transform 0.1s;
 }
 
 .btn-primary {
@@ -79,7 +104,7 @@ input:focus, select:focus {
 .container {
   max-width: 480px;
   margin: 0 auto;
-  padding: 1rem;
+  padding: calc(1rem + var(--safe-top)) 1rem calc(1rem + var(--safe-bottom));
   min-height: 100vh;
 }
 
@@ -178,7 +203,7 @@ h2 {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 72px 12px 16px;
+  padding: calc(12px + var(--safe-top)) 72px 12px 16px;
   z-index: 70;
   background: linear-gradient(to bottom, rgba(15, 15, 15, 0.85) 0%, transparent 100%);
   pointer-events: none;
@@ -195,7 +220,7 @@ h2 {
 
 .grace-banner {
   position: fixed;
-  top: 56px;
+  top: calc(56px + var(--safe-top));
   left: 50%;
   transform: translateX(-50%);
   z-index: 70;
@@ -223,7 +248,7 @@ h2 {
 
 .zone-warning {
   position: fixed;
-  bottom: 110px;
+  bottom: calc(250px + var(--safe-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 70;
@@ -372,41 +397,98 @@ h2 {
   font-size: 0.9rem;
 }
 
-/* ── Music controls ── */
+/* ── Top overlay: timer, prey ping, code ── */
 
-.music-toggle {
-  position: fixed;
-  top: 16px;
-  right: 72px;
-  z-index: 80;
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  color: var(--text);
+.overlay-left {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
-.music-toggle:active {
-  background: var(--surface-hover);
+.overlay-timer.timer-hunter {
+  color: var(--hunter);
+}
+.overlay-timer.timer-prey {
+  color: var(--prey);
+}
+.ping-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(26, 26, 26, 0.85);
+  border: 1px solid var(--prey);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--prey);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.ping-pill strong {
+  font-variant-numeric: tabular-nums;
+}
+.ping-pill .ping-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ping-pill.ping-hunter {
+  border-color: var(--hunter);
+  color: var(--hunter);
+}
+.ping-pill.ping-soon {
+  border-color: var(--warning);
+  color: var(--warning);
+  animation: pulse-warning 1s ease-in-out infinite;
+}
+.overlay-code {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(26, 26, 26, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 10px;
+  color: var(--text);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.overlay-code-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.overlay-code-value {
+  font-size: 1rem;
+  letter-spacing: 0.12em;
+  font-weight: 700;
+  color: var(--accent);
 }
 
-.volume-control {
+/* ── Geolocation error ── */
+
+.geo-error {
   position: fixed;
-  top: 72px;
+  left: 16px;
   right: 16px;
-  z-index: 80;
+  bottom: calc(110px + var(--safe-bottom));
+  z-index: 95;
+  max-width: 448px;
+  margin: 0 auto;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--warning);
+  border-radius: 12px;
+  padding: 12px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  font-size: 0.85rem;
 }
-.volume-control input[type="range"] {
-  width: 100px;
-  height: 4px;
+.geo-error-title {
+  color: var(--warning);
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.geo-error-text {
+  color: var(--text-muted);
+  line-height: 1.4;
 }

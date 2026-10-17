@@ -4,13 +4,21 @@
   import { goto } from '$app/navigation';
   import { sessionStore, logout } from '$lib/stores/session.svelte';
   import { connectWs, sendWs, disconnectWs } from '$lib/api/ws';
-  import { gameStore, initGameListeners, resetUnreadChat } from '$lib/stores/game.svelte';
+  import { gameStore, initGameListeners, resetUnreadChat, serverNow } from '$lib/stores/game.svelte';
+  import { startGeoWatch, distanceMeters, type GeoError } from '$lib/geo';
+  import { enableOrientation, orientationNeedsGesture } from '$lib/stores/orientation.svelte';
   import type { Role, PlayerSnapshot, ChatChannel } from '@manhunt/types';
   import GameMap from '$lib/components/GameMap.svelte';
   import BottomSheet from '$lib/components/BottomSheet.svelte';
   import ChatDrawer from '$lib/components/ChatDrawer.svelte';
+  import VoiceControls from '$lib/components/VoiceControls.svelte';
+  import { voice, initVoice } from '$lib/stores/voice.svelte';
+  import { startMusic, stopMusic, setMusicDucked, resumeAudio } from '$lib/audio';
 
-  let geoWatchId: number | null = null;
+  let geo: ReturnType<typeof startGeoWatch> | null = null;
+  let geoError = $state<GeoError | null>(null);
+  let isIOS = $state(false);
+  let codeCopied = $state(false);
   let unsub: (() => void) | null = null;
   let error = $state('');
   let timer = $state('');
@@ -31,31 +39,70 @@
   let graceInput = $state('1min');
   let pingInput = $state('2min');
   let wakeLock: WakeLockSentinel | null = null;
-  let musicAudio: HTMLAudioElement | null = null;
-  let musicPlaying = $state(false);
-  let musicVolume = $state(0.3);
+  let unsubVoice: (() => void) | null = null;
 
+  let nowTick = $state(Date.now());
+
+  /** Accepts "90", "45s", "1min30", "1m30s", "1h", "1h30", "1,5min"... (a bare number means seconds) */
   function parseDuration(input: string): number | null {
-    const match = input.trim().match(/^(\d+(?:[.,]\d+)?)\s*(s|sec|min|m|h|heure|heures?)$/i);
-    if (!match) return null;
-    const value = parseFloat(match[1].replace(',', '.'));
-    const unit = match[2].toLowerCase();
-    if (unit === 's' || unit === 'sec') return Math.round(value);
-    if (unit === 'm' || unit === 'min') return Math.round(value * 60);
-    if (unit.startsWith('h')) return Math.round(value * 3600);
-    return null;
+    const str = input.trim().toLowerCase().replace(',', '.');
+    if (/^\d+(\.\d+)?$/.test(str)) return Math.round(parseFloat(str));
+    const re = /(\d+(?:\.\d+)?)\s*(heures?|h|minutes?|min|mn|m|secondes?|sec|s)\s*/gy;
+    let total = 0;
+    let lastUnit = '';
+    let match: RegExpExecArray | null;
+    let consumed = 0;
+    while ((match = re.exec(str)) !== null) {
+      const value = parseFloat(match[1]);
+      const unit = match[2];
+      if (unit.startsWith('h')) total += value * 3600;
+      else if (unit.startsWith('m')) total += value * 60;
+      else total += value;
+      lastUnit = unit;
+      consumed = re.lastIndex;
+    }
+    const rest = str.slice(consumed).trim();
+    if (consumed === 0) return null;
+    // Trailing bare number: "1h30" → 30 min, "1min30" → 30 s
+    if (rest) {
+      if (!/^\d+$/.test(rest)) return null;
+      total += parseInt(rest, 10) * (lastUnit.startsWith('h') ? 60 : 1);
+    }
+    return Math.round(total);
   }
 
+  /** Exact, never rounded: what the host sees is what the server uses. */
   function formatDurationInput(seconds: number): string {
-    if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600}h`;
-    if (seconds >= 60) return `${Math.round(seconds / 60)}min`;
-    return `${seconds}s`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    let out = '';
+    if (h) out += `${h}h`;
+    if (m) out += `${m}min`;
+    if (s || !out) out += `${s}s`;
+    return out;
+  }
+
+  function formatClock(totalSeconds: number): string {
+    const s = Math.max(0, totalSeconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const mm = m.toString().padStart(2, '0');
+    const ss = sec.toString().padStart(2, '0');
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
   }
 
   function applyConfig(field: 'maxDuration' | 'gracePeriod' | 'preyPingInterval', input: string) {
     const seconds = parseDuration(input);
-    if (seconds && seconds > 0) {
+    const valid = seconds != null && (field === 'gracePeriod' ? seconds >= 0 : seconds > 0);
+    if (valid) {
       sendWs({ type: 'update_config', [field]: seconds });
+    } else if (gameStore.game) {
+      // Invalid input: show the real value again instead of a misleading one.
+      durationInput = formatDurationInput(gameStore.game.maxDuration);
+      graceInput = formatDurationInput(gameStore.game.gracePeriod);
+      pingInput = formatDurationInput(gameStore.game.preyPingInterval);
     }
   }
 
@@ -73,26 +120,26 @@
       return;
     }
     unsub = initGameListeners();
+    unsubVoice = initVoice();
     connectWs($page.params.code as string, sessionStore.data.sessionId);
 
-    if ('geolocation' in navigator) {
-      geoWatchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          myPosition = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-          sendWs({
-            type: 'position',
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-        },
-        () => {
-          error = 'Géolocalisation requise pour jouer';
-        },
-        { enableHighAccuracy: true, maximumAge: 1000 },
-      );
-    }
+    isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-    timerInterval = setInterval(updateTimer, 1000);
+    geo = startGeoWatch({
+      onPosition: (pos) => {
+        myPosition = pos;
+        sendWs({ type: 'position', latitude: pos.latitude, longitude: pos.longitude });
+      },
+      onError: (err) => { geoError = err; },
+    });
+
+    timerInterval = setInterval(updateTimer, 250);
+
+    // Compass works without a gesture on Android; iOS needs one (see onFirstGesture).
+    if (!orientationNeedsGesture()) enableOrientation();
+    document.addEventListener('click', onFirstGesture, true);
+    document.addEventListener('touchend', onFirstGesture, true);
 
     if ('wakeLock' in navigator) {
       navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
@@ -107,41 +154,51 @@
 
   onDestroy(() => {
     disconnectWs();
-    if (geoWatchId != null) navigator.geolocation.clearWatch(geoWatchId);
+    geo?.stop();
+    document.removeEventListener('click', onFirstGesture, true);
+    document.removeEventListener('touchend', onFirstGesture, true);
     if (unsub) unsub();
+    unsubVoice?.();
     if (timerInterval) clearInterval(timerInterval);
     wakeLock?.release();
     stopMusic();
     document.removeEventListener('visibilitychange', onVisibilityChange);
   });
 
-  function startMusic() {
-    if (musicAudio) return;
-    const audio = new Audio('/hunted.mp3');
-    audio.loop = true;
-    audio.volume = musicVolume;
-    audio.play().catch(() => {});
-    musicAudio = audio;
-    musicPlaying = true;
-  }
+  // Music is always on during the game; browsers block autoplay until a gesture, so taps retry it.
+  // It is ducked while anyone (including me) is talking on the voice chat.
+  $effect(() => {
+    setMusicDucked(voice.speakers.length > 0 || voice.talking != null);
+  });
 
-  function stopMusic() {
-    if (musicAudio) {
-      musicAudio.pause();
-      musicAudio.src = '';
-      musicAudio = null;
+  let orientationAsked = false;
+  function onFirstGesture() {
+    if (!orientationAsked && orientationNeedsGesture()) {
+      orientationAsked = true;
+      enableOrientation();
     }
-    musicPlaying = false;
+    resumeAudio();
+    if (gameStore.game?.status === 'EN_COURS') startMusic();
   }
 
-  function toggleMusic() {
-    if (musicPlaying) stopMusic();
-    else startMusic();
+  $effect(() => {
+    if (gameStore.game?.status === 'EN_COURS') startMusic();
+    else stopMusic();
+  });
+
+  function retryGeo() {
+    geoError = null;
+    geo?.retry();
   }
 
-  function updateMusicVolume(v: number) {
-    musicVolume = v;
-    if (musicAudio) musicAudio.volume = v;
+  async function shareCode() {
+    const code = gameStore.game?.code;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      codeCopied = true;
+      setTimeout(() => { codeCopied = false; }, 1500);
+    } catch { /* clipboard unavailable */ }
   }
 
   function onVisibilityChange() {
@@ -149,6 +206,7 @@
       if ('wakeLock' in navigator) {
         navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
       }
+      if (gameStore.game?.status === 'EN_COURS') startMusic();
       if (myPosition) {
         sendWs({
           type: 'position',
@@ -160,26 +218,39 @@
   }
 
   function updateTimer() {
+    nowTick = serverNow();
     const g = gameStore.game;
     if (!g?.startedAt || g.status !== 'EN_COURS') {
       timer = '';
       graceTimer = '';
       return;
     }
-    const elapsed = Math.floor((Date.now() - g.startedAt) / 1000);
-    const remaining = Math.max(0, g.maxDuration - elapsed);
-    const min = Math.floor(remaining / 60);
-    const sec = remaining % 60;
-    timer = `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    // Server clock (offset-corrected) + ceil: 00:00 is shown exactly when the server fires.
+    const elapsedMs = nowTick - g.startedAt;
+    timer = formatClock(Math.ceil((g.maxDuration * 1000 - elapsedMs) / 1000));
 
     if (gameStore.gracePeriodActive) {
-      const graceRemaining = Math.max(0, g.gracePeriod - elapsed);
-      const gm = Math.floor(graceRemaining / 60);
-      const gs = graceRemaining % 60;
-      graceTimer = `${gm.toString().padStart(2, '0')}:${gs.toString().padStart(2, '0')}`;
+      graceTimer = formatClock(Math.ceil((g.gracePeriod * 1000 - elapsedMs) / 1000));
     } else {
       graceTimer = '';
     }
+  }
+
+  let nextPingIn = $derived(
+    gameStore.pingStatus?.nextPingAt != null ? Math.max(0, Math.ceil((gameStore.pingStatus.nextPingAt - nowTick) / 1000)) : null
+  );
+  let lastPingAgo = $derived(
+    gameStore.pingStatus?.lastPingAt != null ? Math.max(0, Math.floor((nowTick - gameStore.pingStatus.lastPingAt) / 1000)) : null
+  );
+  let lastPingDistance = $derived(
+    gameStore.pingStatus?.lastPing && myPosition ? Math.round(distanceMeters(myPosition, gameStore.pingStatus.lastPing)) : null
+  );
+  let meetingDistance = $derived(
+    gameStore.meetingPoint && myPosition ? Math.round(distanceMeters(myPosition, gameStore.meetingPoint)) : null
+  );
+
+  function formatDistance(m: number): string {
+    return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
   }
 
   function assignRole(targetSessionId: string, role: Role) {
@@ -223,7 +294,9 @@
 
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60);
-    return m > 0 ? `${m} min` : `${seconds} s`;
+    const s = seconds % 60;
+    if (m && s) return `${m} min ${s} s`;
+    return m > 0 ? `${m} min` : `${s} s`;
   }
 
   function setZoneFromPosition() {
@@ -489,19 +562,32 @@
       myRole={myPlayer?.role ?? 'CHASSEUR'}
       zone={game.zone}
       gracePeriodActive={gameStore.gracePeriodActive}
+      lastPing={myPlayer?.role === 'PROIE' ? gameStore.pingStatus?.lastPing : null}
       fullscreen
+      compass
     />
 
-    <!-- Top overlay: role + timer -->
+    <!-- Top overlay: timer + game code -->
     <div class="game-overlay-top">
-      <div class="overlay-role">
-        <span class="badge" class:badge-hunter={myPlayer?.role === 'CHASSEUR'} class:badge-prey={myPlayer?.role === 'PROIE'}>
-          {myPlayer?.role === 'CHASSEUR' ? 'Chasseur' : 'Proie'}
-        </span>
+      <div class="overlay-left">
+        <div class="overlay-timer" class:timer-hunter={myPlayer?.role === 'CHASSEUR'} class:timer-prey={myPlayer?.role === 'PROIE'}>
+          {timer || '--:--'}
+        </div>
+        {#if myPlayer && myPlayer.status === 'LIBRE' && !gameStore.gracePeriodActive && nextPingIn != null}
+          <div class="ping-pill" class:ping-hunter={myPlayer.role === 'CHASSEUR'} class:ping-soon={nextPingIn <= 10}>
+            <span>📡 {myPlayer.role === 'CHASSEUR' ? 'Ping des proies' : 'Prochain ping'} <strong>{formatClock(nextPingIn)}</strong></span>
+            {#if lastPingAgo != null}
+              <span class="ping-sub">
+                Dernier il y a {formatClock(lastPingAgo)}{#if lastPingDistance != null}{` · à ${formatDistance(lastPingDistance)}`}{/if}
+              </span>
+            {/if}
+          </div>
+        {/if}
       </div>
-      {#if timer}
-        <div class="overlay-timer">{timer}</div>
-      {/if}
+      <button class="overlay-code" onclick={shareCode} aria-label="Copier le code de la partie">
+        <span class="overlay-code-label">{codeCopied ? 'Copié !' : 'Code'}</span>
+        <span class="overlay-code-value">{game.code}</span>
+      </button>
     </div>
 
     <!-- Grace period banner -->
@@ -546,20 +632,9 @@
       </div>
     {/if}
 
-    <!-- Music toggle -->
-    <button class="music-toggle" onclick={toggleMusic} aria-label={musicPlaying ? 'Couper la musique' : 'Jouer la musique'}>
-      {#if musicPlaying}
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 8.5v7a4.5 4.5 0 0 0 2.5-3.5zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/></svg>
-      {:else}
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12A4.5 4.5 0 0 0 14 8.5v2.09L16.41 13l.09-.08zM19 12a7 7 0 0 0-4-6.32v1.98A5 5 0 0 1 17 12l2 0zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25A7 7 0 0 1 14 18.7v2.06A9 9 0 0 0 18.16 19L19.73 21 21 19.73 4.27 3zM12 4l-1.69 1.69L12 7.38V4z"/></svg>
-      {/if}
-    </button>
-    {#if musicPlaying}
-      <div class="volume-control">
-        <input type="range" min="0" max="1" step="0.05" value={musicVolume}
-          oninput={(e) => updateMusicVolume(Number((e.target as HTMLInputElement).value))}
-          style="accent-color: var(--accent);" />
-      </div>
+    <!-- Push-to-talk voice chat -->
+    {#if myPlayer}
+      <VoiceControls role={myPlayer.role} />
     {/if}
 
     <!-- Chat drawer (right side) -->
@@ -577,7 +652,9 @@
     <BottomSheet bind:open={sheetOpen}>
       {#snippet peekContent()}
         <div class="peek-bar">
-          <div class="peek-title">Partie en cours</div>
+          <div class="peek-title">
+            Tu es <span style:color={myPlayer?.role === 'CHASSEUR' ? 'var(--hunter)' : 'var(--prey)'}>{myPlayer?.role === 'CHASSEUR' ? 'Chasseur' : 'Proie'}</span>
+          </div>
           <div class="peek-stats">
             <span class="peek-stat" style="color: var(--hunter);">{aliveHunters} <small>chasseurs</small></span>
             <span class="peek-divider">|</span>
@@ -609,6 +686,11 @@
         <div class="sheet-section" style="text-align: center;">
           <div style="font-size: 1.2rem; margin-bottom: 4px;">🏃 Reste en mouvement !</div>
           <div style="color: var(--text-muted); font-size: 0.85rem;">Ping toutes les {formatDuration(game.preyPingInterval)}</div>
+          {#if gameStore.pingStatus?.lastPing}
+            <div style="color: var(--text-muted); font-size: 0.8rem; margin-top: 4px;">
+              Le cercle bleu pointillé sur la carte montre où les Chasseurs t'ont vu au dernier ping.
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -664,6 +746,29 @@
     <!-- GAME OVER -->
     <div style="text-align: center; padding-top: 2rem;">
       <h1 style="font-size: 2rem; margin-bottom: 0.5rem;">Partie terminée</h1>
+
+      <div class="card" style="padding: 1rem;">
+        <h2 style="margin-bottom: 0.5rem;">Point de rendez-vous</h2>
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.75rem;">
+          {#if gameStore.meetingPoint}
+            Retrouvez-vous à l'étoile ★{#if meetingDistance != null}{' — tu es à '}<strong style="color: var(--warning);">{formatDistance(meetingDistance)}</strong>{/if}
+          {:else}
+            Positions de tous les joueurs
+          {/if}
+        </p>
+        <GameMap
+          hunterPositions={[]}
+          preyPositions={[]}
+          {myPosition}
+          mySessionId={sessionStore.data?.sessionId ?? ''}
+          myRole={myPlayer?.role ?? 'CHASSEUR'}
+          zone={game.zone}
+          gracePeriodActive={false}
+          revealPositions={gameStore.allPositions}
+          meetingPoint={gameStore.meetingPoint}
+          tall
+        />
+      </div>
       {#if gameStore.gameOver}
         {@const over = gameStore.gameOver}
         <p style="color: var(--text-muted); margin-bottom: 1.5rem;">
@@ -736,5 +841,31 @@
 
   {#if error}
     <p class="error" style="margin-top: 1rem;">{error}</p>
+  {/if}
+
+  {#if geoError}
+    <div class="geo-error">
+      <div class="geo-error-title">
+        {geoError === 'denied' ? 'Localisation refusée' : geoError === 'unsupported' ? 'Localisation non supportée' : 'Position introuvable'}
+      </div>
+      {#if geoError === 'denied'}
+        {#if isIOS}
+          <div class="geo-error-text">
+            Réglages → Confidentialité et sécurité → Service de localisation : activé.<br />
+            Puis Safari (ou « Sites web Safari ») → <strong>Lorsque l'app est active</strong> + <strong>Position exacte</strong>.
+            Recharge ensuite la page.
+          </div>
+        {:else}
+          <div class="geo-error-text">Autorise la localisation pour ce site dans les réglages du navigateur, puis réessaie.</div>
+        {/if}
+      {:else if geoError === 'unavailable'}
+        <div class="geo-error-text">
+          Recherche du GPS… Sors à découvert{#if isIOS} et vérifie que « Position exacte » est activée pour Safari{/if}.
+        </div>
+      {/if}
+      {#if geoError !== 'unsupported'}
+        <button class="btn-primary" style="padding: 0.4rem 1rem; font-size: 0.85rem; margin-top: 0.5rem;" onclick={retryGeo}>Réessayer</button>
+      {/if}
+    </div>
   {/if}
 </div>
