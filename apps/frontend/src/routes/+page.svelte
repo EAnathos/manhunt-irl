@@ -12,6 +12,7 @@
   let isStandalone = $state(false);
   let isIOS = $state(false);
   let iosHintDismissed = $state(false);
+  let kickedNotice = $state(false);
 
   import { onMount } from 'svelte';
   import { fly, fade } from 'svelte/transition';
@@ -23,6 +24,10 @@
     // iOS never fires beforeinstallprompt: installation is manual via the Share menu.
     isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (new URLSearchParams(location.search).has('exclu')) {
+      kickedNotice = true;
+      history.replaceState(null, '', '/');
+    }
     try {
       iosHintDismissed = localStorage.getItem('manhunt_ios_hint') === '1';
       pseudo = localStorage.getItem('manhunt_pseudo') ?? '';
@@ -109,6 +114,12 @@
   <main class="panel">
     {#if mode === 'menu'}
       <div class="stack" in:fade={{ duration: 200 }}>
+        {#if kickedNotice}
+          <div class="notice reveal">
+            <span>L'hôte t'a exclu de la partie.</span>
+            <button class="link-btn" onclick={() => kickedNotice = false} aria-label="Fermer">✕</button>
+          </div>
+        {/if}
         {#if sessionStore.data}
           <div class="resume reveal" style="--d: 0.05s">
             <div class="resume-info">
@@ -316,6 +327,20 @@
   @keyframes live {
     0% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.6); }
     100% { box-shadow: 0 0 0 8px rgba(255, 68, 68, 0); }
+  }
+
+  .notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.6rem 0.6rem 0.6rem 1rem;
+    border-radius: 12px;
+    background: rgba(255, 170, 0, 0.1);
+    border: 1px solid rgba(255, 170, 0, 0.4);
+    color: var(--warning);
+    font-size: 0.85rem;
+    font-weight: 600;
   }
 
   .ios-hint {

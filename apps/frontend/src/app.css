@@ -466,6 +466,23 @@ h2 {
   color: var(--accent);
 }
 
+/* ── Lobby: kick button ── */
+
+.btn-kick {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  min-width: 28px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  transition: all 0.15s;
+}
+.btn-kick.armed {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* ── Geolocation error ── */
 
 .geo-error {

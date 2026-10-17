@@ -3,7 +3,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { sessionStore, logout } from '$lib/stores/session.svelte';
-  import { connectWs, sendWs, disconnectWs } from '$lib/api/ws';
+  import { connectWs, sendWs, disconnectWs, resyncWs } from '$lib/api/ws';
   import { gameStore, initGameListeners, resetUnreadChat, serverNow } from '$lib/stores/game.svelte';
   import { startGeoWatch, distanceMeters, type GeoError } from '$lib/geo';
   import { enableOrientation, orientationNeedsGesture } from '$lib/stores/orientation.svelte';
@@ -203,6 +203,8 @@
 
   function onVisibilityChange() {
     if (document.visibilityState === 'visible') {
+      // Back from another app (e.g. after sharing the code): the socket may be dead.
+      resyncWs();
       if ('wakeLock' in navigator) {
         navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
       }
@@ -252,6 +254,29 @@
   function formatDistance(m: number): string {
     return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
   }
+
+  let kickConfirm = $state<string | null>(null);
+  let kickConfirmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Two taps: the first arms the button, the second excludes the player. */
+  function kickPlayer(targetSessionId: string) {
+    if (kickConfirm !== targetSessionId) {
+      kickConfirm = targetSessionId;
+      if (kickConfirmTimer) clearTimeout(kickConfirmTimer);
+      kickConfirmTimer = setTimeout(() => { kickConfirm = null; }, 3000);
+      return;
+    }
+    kickConfirm = null;
+    sendWs({ type: 'kick_player', targetSessionId });
+  }
+
+  $effect(() => {
+    if (!gameStore.kicked) return;
+    gameStore.kicked = false;
+    disconnectWs();
+    logout();
+    goto('/?exclu=1');
+  });
 
   function assignRole(targetSessionId: string, role: Role) {
     sendWs({ type: 'assign_role', targetSessionId, role });
@@ -426,9 +451,17 @@
               </span>
               {#if isHost}
                 <button class="btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;"
-                  onclick={() => assignRole(player.sessionId, player.role === 'CHASSEUR' ? 'PROIE' : 'CHASSEUR')}>
+                  onclick={() => assignRole(player.sessionId, player.role === 'CHASSEUR' ? 'PROIE' : 'CHASSEUR')}
+                  aria-label="Changer le rôle de {player.pseudo}">
                   ↔
                 </button>
+                {#if player.sessionId !== game.hostSessionId}
+                  <button class="btn-kick" class:armed={kickConfirm === player.sessionId}
+                    onclick={() => kickPlayer(player.sessionId)}
+                    aria-label="Exclure {player.pseudo}">
+                    {kickConfirm === player.sessionId ? 'Exclure ?' : '✕'}
+                  </button>
+                {/if}
               {/if}
             </div>
           </div>

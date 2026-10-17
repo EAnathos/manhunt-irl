@@ -107,6 +107,8 @@ classDiagram
 | RG-03 | Nombre maximum de joueurs | Une Partie est limitée à 20 Joueurs simultanés. |
 | RG-04 | Rôles mutuellement exclusifs | Un Joueur ne peut être à la fois Chasseur et Proie dans la même Partie. |
 | RG-05 | Démarrage réservé à l'Hôte | Seul l'Hôte peut déclencher le démarrage de la Partie depuis le lobby. |
+| RG-29 | Exclusion depuis le lobby | Dans le lobby uniquement, l'Hôte peut exclure un joueur (sauf lui-même) en deux appuis (« ✕ » puis « Exclure ? »). Le serveur retire le joueur, lui envoie `kicked`, ferme sa connexion et diffuse `player_removed`. Le joueur exclu revient à l'accueil avec un message ; il peut rejoindre à nouveau avec le code. |
+| RG-30 | Liste des joueurs à jour | L'arrivée d'un joueur est diffusée dès sa requête HTTP de connexion (sans attendre son WebSocket). Les clients détectent les connexions mortes (sondage `ping`/`pong` toutes les 15 s, reconnexion si aucune réponse en 5 s) et demandent un état frais (`request_state`) au retour au premier plan. Côté serveur, la fermeture tardive d'un ancien socket n'affecte pas la nouvelle connexion du même joueur. |
 | RG-06 | Délai de grâce | Après le démarrage, le serveur bloque le routage des positions des Proies vers les Chasseurs pendant la durée du délai de grâce (configurable, défaut : 60 s), leur laissant le temps de se cacher. |
 | RG-07 | Visibilité des Proies auprès des Chasseurs | La position GPS des Proies est transmise à tous les Chasseurs à intervalle configurable (RG-13). Elle n'est pas transmise aux autres Proies. |
 | RG-08 | Visibilité des Chasseurs entre eux | La position GPS des Chasseurs est visible par tous les autres Chasseurs en temps réel continu (pas d'intervalle configuré). |
@@ -152,6 +154,7 @@ classDiagram
 | EF-14 | Alerter une Proie hors zone (vibrations, notifications, pings accélérés) | MUST | RG-11 |
 | EF-15 | Gérer la reconnexion | SHOULD | RG-12 |
 | EF-16 | Dissoudre / quitter la partie (Hôte) | MUST | — |
+| EF-30 | Exclure un joueur du lobby (Hôte) | MUST | RG-29 |
 | EF-17 | Afficher la section Règles depuis un fichier JSON | MUST | RG-15 |
 | EF-18 | Ajuster dynamiquement l'intervalle de ping des Proies | SHOULD | RG-17 |
 | EF-19 | Exporter l'historique des positions en fin de partie | SHOULD | RG-18 |
