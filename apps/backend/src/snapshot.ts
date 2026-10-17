@@ -22,5 +22,6 @@ export function gameSnapshot(game: Game): GameSnapshot {
     zone: game.zone,
     eliminations: game.eliminations,
     objectives: game.objectives,
+    meetingPoint: game.meetingPoint,
   };
 }

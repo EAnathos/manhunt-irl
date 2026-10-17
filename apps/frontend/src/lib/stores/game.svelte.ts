@@ -1,4 +1,4 @@
-import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role } from '@manhunt/types';
+import type { GameSnapshot, WSServerMessage, PlayerSnapshot, Elimination, ChatMessage, Role, LatLng, Position } from '@manhunt/types';
 import { onWsMessage } from '../api/ws';
 import { sessionStore } from './session.svelte';
 
@@ -13,6 +13,11 @@ export const gameStore = $state<{
   chatMessages: ChatMessage[];
   unreadChatCount: number;
   positionHistory: Array<{ sessionId: string; pseudo: string; role: Role; positions: Array<{ latitude: number; longitude: number; timestamp: number }> }> | null;
+  /** serverTime - localTime, so countdowns don't depend on the phone's clock */
+  clockOffset: number;
+  pingStatus: { lastPing: Position | null; lastPingAt: number | null; nextPingAt: number | null } | null;
+  meetingPoint: LatLng | null;
+  allPositions: Array<{ sessionId: string; pseudo: string; role: Role; latitude: number; longitude: number; timestamp: number }>;
 }>({
   game: null,
   hunterPositions: [],
@@ -24,7 +29,15 @@ export const gameStore = $state<{
   chatMessages: [],
   unreadChatCount: 0,
   positionHistory: null,
+  clockOffset: 0,
+  pingStatus: null,
+  meetingPoint: null,
+  allPositions: [],
 });
+
+export function serverNow(): number {
+  return Date.now() + gameStore.clockOffset;
+}
 
 export function resetUnreadChat() {
   gameStore.unreadChatCount = 0;
@@ -34,7 +47,11 @@ export function initGameListeners() {
   return onWsMessage((msg: WSServerMessage) => {
     switch (msg.type) {
       case 'game_state':
+        gameStore.clockOffset = msg.serverNow - Date.now();
         gameStore.game = msg.game;
+        gameStore.gracePeriodActive = msg.game.status === 'EN_COURS' && msg.game.startedAt != null
+          && msg.serverNow - msg.game.startedAt < msg.game.gracePeriod * 1000;
+        if (msg.game.meetingPoint) gameStore.meetingPoint = msg.game.meetingPoint;
         break;
 
       case 'player_joined':
@@ -79,6 +96,7 @@ export function initGameListeners() {
         break;
 
       case 'game_started':
+        gameStore.clockOffset = msg.startedAt - Date.now();
         gameStore.gracePeriodActive = true;
         if (gameStore.game) {
           gameStore.game.status = 'EN_COURS';
@@ -140,6 +158,7 @@ export function initGameListeners() {
 
       case 'game_over':
         gameStore.gameOver = { reason: msg.reason, winners: msg.winners };
+        gameStore.meetingPoint = msg.meetingPoint ?? null;
         if (gameStore.game) {
           gameStore.game.status = 'TERMINEE';
         }
@@ -164,6 +183,14 @@ export function initGameListeners() {
         if (gameStore.game) {
           gameStore.game.preyPingInterval = msg.newInterval;
         }
+        break;
+
+      case 'prey_ping_status':
+        gameStore.pingStatus = { lastPing: msg.lastPing, lastPingAt: msg.lastPingAt, nextPingAt: msg.nextPingAt };
+        break;
+
+      case 'all_positions':
+        gameStore.allPositions = msg.positions;
         break;
 
       case 'position_history':

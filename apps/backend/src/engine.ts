@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import type { Game, Elimination, WSServerMessage, ChatMessage, ChatChannel } from '@manhunt/types';
+import type { Game, Elimination, WSServerMessage, ChatMessage, ChatChannel, LatLng, Position } from '@manhunt/types';
 import { games } from './store.js';
 import { isInsideZone } from './geo.js';
 import { broadcastToAll, broadcastToHunters, broadcastToPreys, sendToPlayer } from './broadcast.js';
@@ -12,6 +12,7 @@ interface GameTimers {
   gameEndTimeout?: ReturnType<typeof setTimeout>;
   outOfZoneChecks?: ReturnType<typeof setInterval>;
   criticalPreyBroadcast?: ReturnType<typeof setInterval>;
+  endPositionsBroadcast?: ReturnType<typeof setInterval>;
   purgeTimeout?: ReturnType<typeof setTimeout>;
 }
 
@@ -41,6 +42,8 @@ function clearGameTimers(code: string) {
   if (t.gameEndTimeout) clearTimeout(t.gameEndTimeout);
   if (t.outOfZoneChecks) clearInterval(t.outOfZoneChecks);
   if (t.criticalPreyBroadcast) clearInterval(t.criticalPreyBroadcast);
+  if (t.endPositionsBroadcast) clearInterval(t.endPositionsBroadcast);
+  if (t.purgeTimeout) clearTimeout(t.purgeTimeout);
   timers.delete(code);
 }
 
@@ -51,6 +54,8 @@ export function startGame(game: Game) {
   const preys = Object.values(game.players).filter((p) => p.role === 'PROIE');
   game.initialPreyCount = preys.length;
   game.initialPreyPingInterval = game.preyPingInterval;
+  game.nextPreyPingAt = game.startedAt + game.gracePeriod * 1000;
+  game.lastPreyPings = {};
 
   for (const p of Object.values(game.players)) {
     game.positionHistory[p.sessionId] = [];
@@ -59,6 +64,7 @@ export function startGame(game: Game) {
   const t = getTimers(game.code);
 
   broadcastToAll(game, { type: 'game_started', startedAt: game.startedAt });
+  broadcastPingStatus(game);
 
   t.hunterBroadcastInterval = setInterval(() => {
     broadcastHunterPositions(game);
@@ -77,10 +83,44 @@ export function startGame(game: Game) {
 
 function startPreyBroadcast(game: Game) {
   const t = getTimers(game.code);
-  broadcastPreyPositions(game);
+  scheduledPreyPing(game);
   t.preyBroadcastInterval = setInterval(() => {
-    broadcastPreyPositions(game);
+    scheduledPreyPing(game);
   }, game.preyPingInterval * 1000);
+}
+
+/** Regular (non out-of-zone) prey ping: reveals preys to hunters and tells each prey what was revealed. */
+function scheduledPreyPing(game: Game) {
+  if (game.status !== 'EN_COURS') return;
+  const now = Date.now();
+  broadcastPreyPositions(game);
+  game.lastPreyPings ??= {};
+  for (const p of Object.values(game.players)) {
+    if (p.role === 'PROIE' && p.status === 'LIBRE' && p.position) {
+      game.lastPreyPings[p.sessionId] = { ...p.position };
+    }
+  }
+  game.lastPreyPingAt = now;
+  game.nextPreyPingAt = now + game.preyPingInterval * 1000;
+  broadcastPingStatus(game);
+}
+
+/** Ping timing goes to everyone; a prey only ever receives its own last ping position. */
+export function sendPingStatus(game: Game, sessionId: string) {
+  const p = game.players[sessionId];
+  if (!p || game.status !== 'EN_COURS') return;
+  sendToPlayer(sessionId, {
+    type: 'prey_ping_status',
+    lastPing: p.role === 'PROIE' ? game.lastPreyPings?.[sessionId] ?? null : null,
+    lastPingAt: game.lastPreyPingAt ?? null,
+    nextPingAt: game.nextPreyPingAt ?? null,
+  });
+}
+
+function broadcastPingStatus(game: Game) {
+  for (const p of Object.values(game.players)) {
+    if (p.status !== 'DECONNECTE') sendPingStatus(game, p.sessionId);
+  }
 }
 
 function startOutOfZoneChecks(game: Game) {
@@ -317,11 +357,13 @@ function updatePreyPingInterval(game: Game) {
   if (t.preyBroadcastInterval) {
     clearInterval(t.preyBroadcastInterval);
     t.preyBroadcastInterval = setInterval(() => {
-      broadcastPreyPositions(game);
+      scheduledPreyPing(game);
     }, game.preyPingInterval * 1000);
+    game.nextPreyPingAt = Date.now() + game.preyPingInterval * 1000;
   }
 
   broadcastToAll(game, { type: 'ping_interval_updated', newInterval });
+  broadcastPingStatus(game);
 }
 
 function checkAllPreyEliminated(game: Game) {
@@ -346,7 +388,8 @@ export function endGame(game: Game, reason: 'all_eliminated' | 'time_up') {
     })
     .map(playerSnapshot);
 
-  broadcastToAll(game, { type: 'game_over', reason, winners });
+  game.meetingPoint = computeMeetingPoint(game);
+  broadcastToAll(game, { type: 'game_over', reason, winners, meetingPoint: game.meetingPoint });
 
   const tracks = Object.values(game.players).map((p) => ({
     sessionId: p.sessionId,
@@ -361,7 +404,39 @@ export function endGame(game: Game, reason: 'all_eliminated' | 'time_up') {
   broadcastToAll(game, { type: 'position_history', tracks });
 
   clearGameTimers(game.code);
+
+  // Once the game is over, everyone sees everyone so players can regroup.
+  broadcastAllPositions(game);
+  getTimers(game.code).endPositionsBroadcast = setInterval(() => {
+    broadcastAllPositions(game);
+  }, 2_000);
+
   schedulePurge(game.code);
+}
+
+function computeMeetingPoint(game: Game): LatLng | undefined {
+  const positions = Object.values(game.players)
+    .map((p) => p.position)
+    .filter((p): p is Position => p != null);
+  if (positions.length === 0) return game.zone?.centre;
+  return {
+    latitude: positions.reduce((sum, p) => sum + p.latitude, 0) / positions.length,
+    longitude: positions.reduce((sum, p) => sum + p.longitude, 0) / positions.length,
+  };
+}
+
+function broadcastAllPositions(game: Game) {
+  const positions = Object.values(game.players)
+    .filter((p) => p.position)
+    .map((p) => ({
+      sessionId: p.sessionId,
+      pseudo: p.pseudo,
+      role: p.role,
+      latitude: p.position!.latitude,
+      longitude: p.position!.longitude,
+      timestamp: p.position!.timestamp,
+    }));
+  broadcastToAll(game, { type: 'all_positions', positions });
 }
 
 export function dissolveGame(game: Game) {
@@ -374,7 +449,7 @@ function schedulePurge(code: string) {
   const t = getTimers(code);
   t.purgeTimeout = setTimeout(() => {
     games.delete(code);
-    timers.delete(code);
+    clearGameTimers(code);
   }, PURGE_DELAY_MS);
 }
 
@@ -382,14 +457,16 @@ export function handleReconnect(game: Game, sessionId: string): boolean {
   const player = game.players[sessionId];
   if (!player) return false;
 
+  let restored = true;
   if (player.status === 'DECONNECTE') {
     const elapsed = Date.now() - player.lastSeen;
-    if (elapsed > RECONNECT_WINDOW_MS) return false;
-    player.status = 'LIBRE';
+    if (elapsed > RECONNECT_WINDOW_MS) restored = false;
+    else player.status = 'LIBRE';
   }
 
   player.lastSeen = Date.now();
-  sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game) });
+  // Always send the state, even past the reconnect window, so the client never hangs on "Connexion..."
+  sendToPlayer(sessionId, { type: 'game_state', game: gameSnapshot(game), serverNow: Date.now() });
 
   if (game.chatMessages.length > 0) {
     const visible = game.chatMessages.filter((m) => {
@@ -403,7 +480,7 @@ export function handleReconnect(game: Game, sessionId: string): boolean {
     }
   }
 
-  return true;
+  return restored;
 }
 
 export function handleDisconnect(game: Game, sessionId: string) {
@@ -449,6 +526,24 @@ export function handleChatMessage(game: Game, sessionId: string, channel: ChatCh
   return true;
 }
 
+const MAX_VOICE_CHUNK_LENGTH = 16_000;
+
+/** Relays push-to-talk audio with the same channel rules as the text chat. Never echoed to the sender. */
+export function handleVoice(game: Game, sessionId: string, channel: ChatChannel, msg: WSServerMessage) {
+  const player = game.players[sessionId];
+  if (!player || game.status !== 'EN_COURS') return;
+  if (channel === 'proies' && player.role !== 'PROIE') return;
+  if (channel === 'chasseurs' && player.role !== 'CHASSEUR') return;
+  if (msg.type === 'voice_chunk' && msg.data.length > MAX_VOICE_CHUNK_LENGTH) return;
+
+  for (const p of Object.values(game.players)) {
+    if (p.sessionId === sessionId) continue;
+    if (channel === 'proies' && p.role !== 'PROIE') continue;
+    if (channel === 'chasseurs' && p.role !== 'CHASSEUR') continue;
+    sendToPlayer(p.sessionId, msg);
+  }
+}
+
 export function recordPosition(game: Game, sessionId: string, latitude: number, longitude: number) {
   const pos = { latitude, longitude, timestamp: Date.now() };
   const player = game.players[sessionId];
@@ -456,7 +551,7 @@ export function recordPosition(game: Game, sessionId: string, latitude: number, 
     player.position = pos;
     player.lastSeen = Date.now();
   }
-  if (game.positionHistory[sessionId]) {
+  if (game.status === 'EN_COURS' && game.positionHistory[sessionId]) {
     game.positionHistory[sessionId].push(pos);
   }
 }

@@ -14,6 +14,11 @@ export interface Position {
   timestamp: number;
 }
 
+export interface LatLng {
+  latitude: number;
+  longitude: number;
+}
+
 export interface Zone {
   type: 'cercle' | 'polygone';
   centre?: { latitude: number; longitude: number };
@@ -70,6 +75,14 @@ export interface Game {
   chatMessages: ChatMessage[];
   initialPreyCount?: number;
   initialPreyPingInterval?: number;
+  /** Server timestamp of the next scheduled prey ping */
+  nextPreyPingAt?: number;
+  /** Server timestamp of the last scheduled prey ping */
+  lastPreyPingAt?: number;
+  /** Position of each prey as revealed to hunters at the last scheduled ping */
+  lastPreyPings?: Record<string, Position>;
+  /** Rally point computed when the game ends (centroid of last known positions) */
+  meetingPoint?: LatLng;
 }
 
 // ─── HTTP payloads ───────────────────────────────────────
@@ -105,6 +118,7 @@ export interface GameSnapshot {
   zone?: Zone;
   eliminations: Elimination[];
   objectives: Objective[];
+  meetingPoint?: LatLng;
 }
 
 export interface PlayerSnapshot {
@@ -135,10 +149,13 @@ export type WSClientMessage =
   | { type: 'chat_message'; channel: ChatChannel; text: string }
   | { type: 'add_objective'; title: string; assignedTo: 'proies' | 'chasseurs' | 'tous' }
   | { type: 'remove_objective'; objectiveId: string }
-  | { type: 'complete_objective'; objectiveId: string };
+  | { type: 'complete_objective'; objectiveId: string }
+  /** Push-to-talk audio: 16 kHz mono G.711 µ-law, base64 */
+  | { type: 'voice_chunk'; channel: ChatChannel; seq: number; data: string }
+  | { type: 'voice_end'; channel: ChatChannel };
 
 export type WSServerMessage =
-  | { type: 'game_state'; game: GameSnapshot }
+  | { type: 'game_state'; game: GameSnapshot; serverNow: number }
   | { type: 'player_joined'; player: PlayerSnapshot }
   | { type: 'player_left'; sessionId: string }
   | { type: 'role_assigned'; sessionId: string; role: Role }
@@ -153,7 +170,12 @@ export type WSServerMessage =
   | { type: 'elimination_arbitrated'; eliminationId: string; confirmed: boolean }
   | { type: 'player_eliminated'; sessionId: string; pseudo: string }
   | { type: 'out_of_zone_warning'; secondsRemaining: number; phase: 'warning' | 'critical' }
-  | { type: 'game_over'; reason: 'all_eliminated' | 'time_up'; winners: PlayerSnapshot[] }
+  | { type: 'game_over'; reason: 'all_eliminated' | 'time_up'; winners: PlayerSnapshot[]; meetingPoint?: LatLng }
+  /** lastPing (own revealed position) is only ever sent to that prey; hunters get null */
+  | { type: 'prey_ping_status'; lastPing: Position | null; lastPingAt: number | null; nextPingAt: number | null }
+  | { type: 'voice_chunk'; sessionId: string; pseudo: string; channel: ChatChannel; seq: number; data: string }
+  | { type: 'voice_end'; sessionId: string }
+  | { type: 'all_positions'; positions: Array<{ sessionId: string; pseudo: string; role: Role; latitude: number; longitude: number; timestamp: number }> }
   | { type: 'game_dissolved' }
   | { type: 'error'; message: string }
   | { type: 'grace_period_ended' }

@@ -9,6 +9,7 @@ import type {
 } from '@manhunt/types';
 import { games, generateCode, generateSessionId } from '../store.js';
 import { gameSnapshot } from '../snapshot.js';
+import { getWs } from '../broadcast.js';
 
 const MAX_PLAYERS = 20;
 
@@ -77,15 +78,27 @@ export async function gameRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: 'Game not found' });
     }
 
+    const trimmedPseudo = pseudo.trim();
+
     if (game.status !== 'LOBBY') {
-      return reply.status(400).send({ error: 'Game already started' });
+      // Rejoin a started game with the same pseudo (e.g. app closed, session lost).
+      const existing = Object.values(game.players).find(
+        (p) => p.pseudo.toLowerCase() === trimmedPseudo.toLowerCase()
+      );
+      if (!existing) {
+        return reply.status(400).send({ error: 'Partie déjà lancée : utilise le même pseudo pour la rejoindre' });
+      }
+      if (getWs(existing.sessionId)) {
+        return reply.status(400).send({ error: 'Ce joueur est déjà connecté' });
+      }
+      const response: JoinGameResponse = { sessionId: existing.sessionId, game: gameSnapshot(game) };
+      return reply.status(200).send(response);
     }
 
     if (Object.keys(game.players).length >= MAX_PLAYERS) {
       return reply.status(400).send({ error: 'Game is full (max 20 players)' });
     }
 
-    const trimmedPseudo = pseudo.trim();
     const pseudoTaken = Object.values(game.players).some(
       (p) => p.pseudo.toLowerCase() === trimmedPseudo.toLowerCase()
     );

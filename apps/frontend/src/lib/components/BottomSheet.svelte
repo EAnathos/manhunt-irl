@@ -94,7 +94,7 @@
   }
 
   .bottom-sheet {
-    --peek-height: 90px;
+    --peek-height: calc(90px + var(--safe-bottom));
     position: fixed;
     left: 0;
     right: 0;
@@ -143,7 +143,7 @@
   .sheet-body {
     flex: 1;
     overflow-y: auto;
-    padding: 0 20px 24px;
+    padding: 0 20px calc(24px + var(--safe-bottom));
     overscroll-behavior: contain;
   }
 </style>
