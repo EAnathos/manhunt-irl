@@ -1,11 +1,11 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { sessionStore, logout } from '$lib/stores/session.svelte';
   import { connectWs, sendWs, disconnectWs, resyncWs } from '$lib/api/ws';
   import { gameStore, initGameListeners, resetUnreadChat, serverNow } from '$lib/stores/game.svelte';
-  import { startGeoWatch, distanceMeters, type GeoError } from '$lib/geo';
+  import { startGeoWatch, distanceMeters, currentZoneRadius, type GeoError, type GeoFix } from '$lib/geo';
   import { enableOrientation, orientationNeedsGesture } from '$lib/stores/orientation.svelte';
   import type { Role, PlayerSnapshot, ChatChannel } from '@manhunt/types';
   import GameMap from '$lib/components/GameMap.svelte';
@@ -25,7 +25,14 @@
   let timerInterval: ReturnType<typeof setInterval> | null = null;
   let shuffling = $state(false);
 
-  let myPosition = $state<{ latitude: number; longitude: number } | null>(null);
+  let myPosition = $state<GeoFix | null>(null);
+  let positionResend: ReturnType<typeof setInterval> | null = null;
+  const POSITION_RESEND_MS = 10_000;
+
+  function sendMyPosition() {
+    if (!myPosition) return;
+    sendWs({ type: 'position', latitude: myPosition.latitude, longitude: myPosition.longitude, accuracy: myPosition.accuracy });
+  }
   let zoneRadius = $state(500);
 
   let chatOpen = $state(false);
@@ -129,12 +136,15 @@
     geo = startGeoWatch({
       onPosition: (pos) => {
         myPosition = pos;
-        sendWs({ type: 'position', latitude: pos.latitude, longitude: pos.longitude });
+        sendMyPosition();
       },
       onError: (err) => { geoError = err; },
     });
 
     timerInterval = setInterval(updateTimer, 250);
+    // The GPS only reports changes: a player standing still (a hidden prey!) would otherwise
+    // be unknown to the server after a reconnect or at the first ping.
+    positionResend = setInterval(sendMyPosition, POSITION_RESEND_MS);
 
     // Compass works without a gesture on Android; iOS needs one (see onFirstGesture).
     if (!orientationNeedsGesture()) enableOrientation();
@@ -160,6 +170,7 @@
     if (unsub) unsub();
     unsubVoice?.();
     if (timerInterval) clearInterval(timerInterval);
+    if (positionResend) clearInterval(positionResend);
     wakeLock?.release();
     stopMusic();
     document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -209,13 +220,7 @@
         navigator.wakeLock.request('screen').then((wl) => { wakeLock = wl; }).catch(() => {});
       }
       if (gameStore.game?.status === 'EN_COURS') startMusic();
-      if (myPosition) {
-        sendWs({
-          type: 'position',
-          latitude: myPosition.latitude,
-          longitude: myPosition.longitude,
-        });
-      }
+      sendMyPosition();
     }
   }
 
@@ -253,6 +258,74 @@
 
   function formatDistance(m: number): string {
     return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${m} m`;
+  }
+
+  // ── Shrinking zone (lobby config) ──
+  let shrinkStartInput = $state('');
+  let shrinkEndInput = $state('');
+
+  function defaultShrink() {
+    const g = gameStore.game!;
+    const radius = g.zone?.rayon ?? 500;
+    return {
+      finalRadius: Math.max(50, Math.round((radius * 0.3) / 10) * 10),
+      startDelay: g.gracePeriod,
+      endDelay: Math.max(g.gracePeriod + 60, Math.round(g.maxDuration * 0.8)),
+    };
+  }
+
+  function updateShrink(patch: Partial<{ finalRadius: number; startDelay: number; endDelay: number }> | null) {
+    const g = gameStore.game;
+    if (!g) return;
+    if (patch === null) {
+      sendWs({ type: 'update_config', zoneShrink: null });
+      return;
+    }
+    const next = { ...(g.zoneShrink ?? defaultShrink()), ...patch };
+    if (next.endDelay <= next.startDelay) {
+      shrinkStartInput = formatDurationInput((g.zoneShrink ?? next).startDelay);
+      shrinkEndInput = formatDurationInput((g.zoneShrink ?? next).endDelay);
+      return;
+    }
+    sendWs({ type: 'update_config', zoneShrink: next });
+  }
+
+  function applyShrinkDelay(field: 'startDelay' | 'endDelay', input: string) {
+    const seconds = parseDuration(input);
+    if (seconds == null || seconds < 0) {
+      const g = gameStore.game;
+      if (g?.zoneShrink) {
+        shrinkStartInput = formatDurationInput(g.zoneShrink.startDelay);
+        shrinkEndInput = formatDurationInput(g.zoneShrink.endDelay);
+      }
+      return;
+    }
+    updateShrink({ [field]: seconds });
+  }
+
+  let shrinkDebounce: ReturnType<typeof setTimeout> | null = null;
+  function updateFinalRadius(r: number) {
+    if (shrinkDebounce) clearTimeout(shrinkDebounce);
+    shrinkDebounce = setTimeout(() => updateShrink({ finalRadius: r }), 150);
+  }
+
+  /** Zone as it is right now (radius reduced if it shrinks). */
+  let liveZone = $derived.by(() => {
+    const g = gameStore.game;
+    const zone = g?.zone;
+    if (!g || !zone || zone.type !== 'cercle' || zone.rayon == null || !g.zoneShrink) return zone;
+    return { ...zone, rayon: currentZoneRadius(zone.rayon, g.zoneShrink, g.startedAt, g.maxDuration, nowTick) };
+  });
+
+  function restartGame() {
+    sendWs({ type: 'restart_game' });
+  }
+
+  function leaveGame() {
+    sendWs({ type: 'leave_game' });
+    disconnectWs();
+    logout();
+    goto('/');
   }
 
   let kickConfirm = $state<string | null>(null);
@@ -364,12 +437,21 @@
     if (chatOpen) resetUnreadChat();
   });
 
+  // Fresh state (connect / reconnect / restart): tell the server where we are right away.
+  $effect(() => {
+    if (gameStore.game) untrack(sendMyPosition);
+  });
+
   $effect(() => {
     const g = gameStore.game;
     if (!g) return;
     durationInput = formatDurationInput(g.maxDuration);
     graceInput = formatDurationInput(g.gracePeriod);
     pingInput = formatDurationInput(g.preyPingInterval);
+    if (g.zoneShrink) {
+      shrinkStartInput = formatDurationInput(g.zoneShrink.startDelay);
+      shrinkEndInput = formatDurationInput(g.zoneShrink.endDelay);
+    }
   });
 
   function addObjective() {
@@ -506,6 +588,7 @@
           mySessionId={sessionStore.data?.sessionId ?? ''}
           myRole={'CHASSEUR'}
           zone={game.zone}
+          finalZoneRadius={game.zoneShrink ? Math.min(game.zoneShrink.finalRadius, game.zone?.rayon ?? Infinity) : null}
           gracePeriodActive={false}
         />
         {#if game.zone?.centre}
@@ -521,6 +604,44 @@
               <span style="color: var(--text-muted); font-size: 0.7rem;">50 m</span>
               <span style="color: var(--text-muted); font-size: 0.7rem;">5 km</span>
             </div>
+
+            <label class="shrink-toggle">
+              <input type="checkbox" checked={!!game.zoneShrink}
+                onchange={(e) => updateShrink((e.target as HTMLInputElement).checked ? {} : null)} />
+              <span>Zone qui rétrécit petit à petit</span>
+            </label>
+
+            {#if game.zoneShrink}
+              {@const shrink = game.zoneShrink}
+              {@const radius = game.zone.rayon ?? 500}
+              <div class="shrink-config">
+                <div class="flex-between" style="margin-bottom: 0.5rem;">
+                  <span style="color: var(--text-muted); font-size: 0.85rem;">Rayon final</span>
+                  <span style="font-weight: 700; font-size: 0.9rem;">{Math.min(shrink.finalRadius, radius)} m</span>
+                </div>
+                <input type="range" min="20" max={Math.max(20, radius - 10)} step="10" value={Math.min(shrink.finalRadius, radius)}
+                  oninput={(e) => updateFinalRadius(Number((e.target as HTMLInputElement).value))}
+                  style="width: 100%; accent-color: var(--warning);" />
+                <div class="shrink-delays">
+                  <label>
+                    <span>Commence après</span>
+                    <input type="text" bind:value={shrinkStartInput} placeholder="ex: 1min"
+                      onblur={() => applyShrinkDelay('startDelay', shrinkStartInput)}
+                      onkeydown={(e) => { if (e.key === 'Enter') applyShrinkDelay('startDelay', shrinkStartInput); }} />
+                  </label>
+                  <label>
+                    <span>Rayon final atteint après</span>
+                    <input type="text" bind:value={shrinkEndInput} placeholder="ex: 25min"
+                      onblur={() => applyShrinkDelay('endDelay', shrinkEndInput)}
+                      onkeydown={(e) => { if (e.key === 'Enter') applyShrinkDelay('endDelay', shrinkEndInput); }} />
+                  </label>
+                </div>
+                <p class="shrink-summary">
+                  {radius} m → {Math.min(shrink.finalRadius, radius)} m, de {formatDuration(shrink.startDelay)} à {formatDuration(Math.min(shrink.endDelay, game.maxDuration))} après le début.
+                  {#if shrink.endDelay > game.maxDuration}<br />La partie se termine avant : la zone finale sera atteinte à la fin.{/if}
+                </p>
+              </div>
+            {/if}
           </div>
         {:else}
           <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.75rem 0;">
@@ -579,6 +700,7 @@
       <div class="card" style="text-align: center; color: var(--text-muted);">
         En attente du lancement par l'hôte...
       </div>
+      <button class="btn-secondary" style="width: 100%;" onclick={leaveGame}>Quitter la partie</button>
     {/if}
 
   {:else if gameStore.game.status === 'EN_COURS'}
@@ -593,7 +715,8 @@
       {myPosition}
       mySessionId={sessionStore.data?.sessionId ?? ''}
       myRole={myPlayer?.role ?? 'CHASSEUR'}
-      zone={game.zone}
+      zone={liveZone}
+      finalZoneRadius={game.zoneShrink ? Math.min(game.zoneShrink.finalRadius, game.zone?.rayon ?? Infinity) : null}
       gracePeriodActive={gameStore.gracePeriodActive}
       lastPing={myPlayer?.role === 'PROIE' ? gameStore.pingStatus?.lastPing : null}
       fullscreen
@@ -606,6 +729,12 @@
         <div class="overlay-timer" class:timer-hunter={myPlayer?.role === 'CHASSEUR'} class:timer-prey={myPlayer?.role === 'PROIE'}>
           {timer || '--:--'}
         </div>
+        {#if game.zoneShrink && liveZone?.rayon != null && game.zone?.rayon != null}
+          {@const finalR = Math.min(game.zoneShrink.finalRadius, game.zone.rayon)}
+          <div class="zone-pill" class:zone-shrinking={liveZone.rayon < game.zone.rayon && liveZone.rayon > finalR}>
+            ⭕ Zone {Math.round(liveZone.rayon)} m{#if liveZone.rayon > finalR}{` → ${finalR} m`}{/if}
+          </div>
+        {/if}
         {#if myPlayer && myPlayer.status === 'LIBRE' && !gameStore.gracePeriodActive && nextPingIn != null}
           <div class="ping-pill" class:ping-hunter={myPlayer.role === 'CHASSEUR'} class:ping-soon={nextPingIn <= 10}>
             <span>📡 {myPlayer.role === 'CHASSEUR' ? 'Ping des proies' : 'Prochain ping'} <strong>{formatClock(nextPingIn)}</strong></span>
@@ -866,9 +995,24 @@
         </button>
       {/if}
 
-      <button class="btn-primary" style="margin-top: 0.5rem; width: 100%;" onclick={() => { logout(); goto('/'); }}>
-        Retour à l'accueil
-      </button>
+      {#if isHost}
+        <button class="btn-primary" style="margin-top: 0.5rem; width: 100%;" onclick={restartGame}>
+          Relancer avec les mêmes joueurs
+        </button>
+        <p style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.35rem;">
+          Retour au lobby : tu pourras modifier la configuration avant de lancer.
+        </p>
+        <button class="btn-secondary" style="margin-top: 0.5rem; width: 100%;" onclick={() => { logout(); goto('/'); }}>
+          Retour à l'accueil
+        </button>
+      {:else}
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 0.75rem;">
+          Reste ici : l'hôte peut relancer une partie avec les mêmes joueurs.
+        </p>
+        <button class="btn-secondary" style="margin-top: 0.5rem; width: 100%;" onclick={leaveGame}>
+          Quitter et retourner à l'accueil
+        </button>
+      {/if}
     </div>
   {/if}
 

@@ -38,6 +38,20 @@ export const gameStore = $state<{
   kicked: false,
 });
 
+/** Clear everything tied to the previous round (used when the host restarts from the end screen). */
+function resetRoundState() {
+  gameStore.hunterPositions = [];
+  gameStore.preyPositions = [];
+  gameStore.pendingElimination = null;
+  gameStore.gameOver = null;
+  gameStore.gracePeriodActive = false;
+  gameStore.outOfZoneWarning = null;
+  gameStore.positionHistory = null;
+  gameStore.pingStatus = null;
+  gameStore.meetingPoint = null;
+  gameStore.allPositions = [];
+}
+
 export function serverNow(): number {
   return Date.now() + gameStore.clockOffset;
 }
@@ -51,6 +65,7 @@ export function initGameListeners() {
     switch (msg.type) {
       case 'game_state':
         gameStore.clockOffset = msg.serverNow - Date.now();
+        if (msg.game.status === 'LOBBY') resetRoundState();
         gameStore.game = msg.game;
         gameStore.gracePeriodActive = msg.game.status === 'EN_COURS' && msg.game.startedAt != null
           && msg.serverNow - msg.game.startedAt < msg.game.gracePeriod * 1000;
@@ -105,6 +120,7 @@ export function initGameListeners() {
           gameStore.game.gracePeriod = msg.gracePeriod;
           gameStore.game.preyPingInterval = msg.preyPingInterval;
           gameStore.game.zone = msg.zone;
+          gameStore.game.zoneShrink = msg.zoneShrink;
         }
         break;
 

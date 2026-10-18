@@ -23,6 +23,8 @@
     revealPositions?: Array<{ sessionId: string; pseudo: string; role: Role; latitude: number; longitude: number }>;
     meetingPoint?: LatLng | null;
     tall?: boolean;
+    /** Shrinking zone: final radius, drawn as a dotted circle */
+    finalZoneRadius?: number | null;
   }
 
   let {
@@ -39,6 +41,7 @@
     revealPositions,
     meetingPoint = null,
     tall = false,
+    finalZoneRadius = null,
   }: Props = $props();
 
   // leaflet-rotate adds these at runtime
@@ -263,22 +266,47 @@
     else map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 18 });
   });
 
+  let finalZoneLayer: L.Circle | null = null;
+
+  // Zone circle: updated in place (a shrinking zone changes every second)
   $effect(() => {
     if (!map || !initialized) return;
+    const centre = zone?.type === 'cercle' ? zone.centre : undefined;
+    const radius = zone?.rayon;
 
-    if (zoneLayer) {
-      zoneLayer.remove();
+    if (!centre || !radius) {
+      zoneLayer?.remove();
       zoneLayer = null;
-    }
-
-    if (zone?.type === 'cercle' && zone.centre && zone.rayon) {
-      zoneLayer = L.circle([zone.centre.latitude, zone.centre.longitude], {
-        radius: zone.rayon,
+    } else if (zoneLayer) {
+      zoneLayer.setLatLng([centre.latitude, centre.longitude]);
+      zoneLayer.setRadius(radius);
+    } else {
+      zoneLayer = L.circle([centre.latitude, centre.longitude], {
+        radius,
         color: '#ff4444',
         fillColor: '#ff4444',
         fillOpacity: 0.08,
         weight: 2,
         dashArray: '6 4',
+      }).addTo(map);
+    }
+
+    // Shrinking zone: show where it will end up
+    if (!centre || !finalZoneRadius || (radius != null && finalZoneRadius >= radius)) {
+      finalZoneLayer?.remove();
+      finalZoneLayer = null;
+    } else if (finalZoneLayer) {
+      finalZoneLayer.setLatLng([centre.latitude, centre.longitude]);
+      finalZoneLayer.setRadius(finalZoneRadius);
+    } else {
+      finalZoneLayer = L.circle([centre.latitude, centre.longitude], {
+        radius: finalZoneRadius,
+        color: '#ffaa00',
+        fill: false,
+        weight: 2,
+        opacity: 0.8,
+        dashArray: '2 6',
+        interactive: false,
       }).addTo(map);
     }
   });

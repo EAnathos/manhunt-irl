@@ -12,6 +12,15 @@ export interface Position {
   latitude: number;
   longitude: number;
   timestamp: number;
+  /** GPS accuracy radius in meters, when known */
+  accuracy?: number;
+}
+
+/** Zone shrinking linearly from its radius to finalRadius, between startDelay and endDelay (seconds after start) */
+export interface ZoneShrink {
+  finalRadius: number;
+  startDelay: number;
+  endDelay: number;
 }
 
 export interface LatLng {
@@ -69,6 +78,7 @@ export interface Game {
   gracePeriod: number;
   preyPingInterval: number;
   zone?: Zone;
+  zoneShrink?: ZoneShrink;
   eliminations: Elimination[];
   objectives: Objective[];
   positionHistory: Record<string, Position[]>;
@@ -116,6 +126,7 @@ export interface GameSnapshot {
   gracePeriod: number;
   preyPingInterval: number;
   zone?: Zone;
+  zoneShrink?: ZoneShrink;
   eliminations: Elimination[];
   objectives: Objective[];
   meetingPoint?: LatLng;
@@ -136,13 +147,13 @@ export interface RuleSection {
 // ─── WebSocket messages ──────────────────────────────────
 
 export type WSClientMessage =
-  | { type: 'position'; latitude: number; longitude: number }
+  | { type: 'position'; latitude: number; longitude: number; accuracy?: number }
   | { type: 'declare_elimination'; preySessionId: string }
   | { type: 'confirm_elimination'; eliminationId: string }
   | { type: 'contest_elimination'; eliminationId: string }
   | { type: 'arbitrate_elimination'; eliminationId: string; confirmed: boolean }
   | { type: 'assign_role'; targetSessionId: string; role: Role }
-  | { type: 'update_config'; maxDuration?: number; gracePeriod?: number; preyPingInterval?: number; zone?: Zone }
+  | { type: 'update_config'; maxDuration?: number; gracePeriod?: number; preyPingInterval?: number; zone?: Zone; zoneShrink?: ZoneShrink | null }
   | { type: 'randomize_roles'; preyCount: number }
   | { type: 'start_game' }
   | { type: 'dissolve_game' }
@@ -157,7 +168,11 @@ export type WSClientMessage =
   /** Ask for a fresh game_state (e.g. app back from background) */
   | { type: 'request_state' }
   /** Liveness check, answered by pong */
-  | { type: 'ping' };
+  | { type: 'ping' }
+  /** Host, after the game: back to the lobby with the same players */
+  | { type: 'restart_game' }
+  /** Non-host leaves the lobby / finished game */
+  | { type: 'leave_game' };
 
 export type WSServerMessage =
   | { type: 'game_state'; game: GameSnapshot; serverNow: number }
@@ -165,7 +180,7 @@ export type WSServerMessage =
   | { type: 'player_left'; sessionId: string }
   | { type: 'role_assigned'; sessionId: string; role: Role }
   | { type: 'roles_randomized'; players: Array<{ sessionId: string; role: Role }> }
-  | { type: 'config_updated'; maxDuration: number; gracePeriod: number; preyPingInterval: number; zone?: Zone }
+  | { type: 'config_updated'; maxDuration: number; gracePeriod: number; preyPingInterval: number; zone?: Zone; zoneShrink?: ZoneShrink }
   | { type: 'game_started'; startedAt: number }
   | { type: 'hunter_positions'; positions: Array<{ sessionId: string; pseudo: string; latitude: number; longitude: number; timestamp: number }> }
   | { type: 'prey_positions'; positions: Array<{ sessionId: string; pseudo: string; latitude: number; longitude: number; timestamp: number }> }

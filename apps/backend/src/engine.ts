@@ -1,7 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import type { Game, Elimination, WSServerMessage, ChatMessage, ChatChannel, LatLng, Position } from '@manhunt/types';
 import { games } from './store.js';
-import { isInsideZone } from './geo.js';
+import { isInsideZone, currentZoneRadius } from './geo.js';
 import { broadcastToAll, broadcastToHunters, broadcastToPreys, sendToPlayer } from './broadcast.js';
 import { gameSnapshot, playerSnapshot } from './snapshot.js';
 
@@ -18,6 +18,7 @@ interface GameTimers {
 
 const timers = new Map<string, GameTimers>();
 const outOfZoneTimestamps = new Map<string, number>();
+const criticalBroadcastActive = new Set<string>();
 const ELIMINATION_TIMEOUT_MS = 60_000;
 const RECONNECT_WINDOW_MS = 120_000;
 const OUT_OF_ZONE_WARNING_MS = 15_000;
@@ -45,6 +46,17 @@ function clearGameTimers(code: string) {
   if (t.endPositionsBroadcast) clearInterval(t.endPositionsBroadcast);
   if (t.purgeTimeout) clearTimeout(t.purgeTimeout);
   timers.delete(code);
+  clearZoneState(code);
+}
+
+/** Forget out-of-zone timers of a game, so they don't leak into the next one. */
+function clearZoneState(code: string) {
+  for (const key of [...outOfZoneTimestamps.keys()]) {
+    if (key.startsWith(`${code}:`)) outOfZoneTimestamps.delete(key);
+  }
+  for (const key of [...criticalBroadcastActive]) {
+    if (key.startsWith(`${code}:`)) criticalBroadcastActive.delete(key);
+  }
 }
 
 export function startGame(game: Game) {
@@ -178,18 +190,31 @@ function isInGracePeriod(game: Game): boolean {
   return Date.now() - game.startedAt < game.gracePeriod * 1000;
 }
 
-const criticalBroadcastActive = new Set<string>();
+/** Fixes less precise than this (cell / Wi-Fi fallback) never count for the zone check. */
+const MAX_ZONE_CHECK_ACCURACY_M = 100;
+/** Benefit of the doubt given for GPS imprecision at the zone edge. */
+const MAX_ZONE_TOLERANCE_M = 25;
+
+export function effectiveZone(game: Game, now = Date.now()) {
+  const zone = game.zone;
+  if (!zone || zone.type !== 'cercle' || zone.rayon == null) return zone;
+  return { ...zone, rayon: currentZoneRadius(zone.rayon, game.zoneShrink, game.startedAt, game.maxDuration, now) };
+}
 
 function checkOutOfZone(game: Game) {
   if (game.status !== 'EN_COURS' || !game.zone) return;
   const now = Date.now();
   const t = getTimers(game.code);
+  const zone = effectiveZone(game, now)!;
 
   for (const p of Object.values(game.players)) {
     if (p.role !== 'PROIE' || p.status !== 'LIBRE' || !p.position) continue;
+    const accuracy = p.position.accuracy ?? 0;
+    // Too imprecise to judge: keep the current state rather than risk an unfair elimination.
+    if (accuracy > MAX_ZONE_CHECK_ACCURACY_M) continue;
 
     const key = `${game.code}:${p.sessionId}`;
-    const inside = isInsideZone(p.position.latitude, p.position.longitude, game.zone);
+    const inside = isInsideZone(p.position.latitude, p.position.longitude, zone, Math.min(accuracy, MAX_ZONE_TOLERANCE_M));
 
     if (!inside) {
       const since = outOfZoneTimestamps.get(key);
@@ -445,6 +470,28 @@ export function dissolveGame(game: Game) {
   games.delete(game.code);
 }
 
+/** After a game: back to the lobby with the same players and config, everything else reset. */
+export function resetGame(game: Game) {
+  clearGameTimers(game.code);
+  game.status = 'LOBBY';
+  game.startedAt = undefined;
+  game.eliminations = [];
+  game.positionHistory = {};
+  game.meetingPoint = undefined;
+  game.lastPreyPings = undefined;
+  game.nextPreyPingAt = undefined;
+  game.lastPreyPingAt = undefined;
+  // The ping interval shrinks as preys are eliminated (RG-17): restore the configured value.
+  if (game.initialPreyPingInterval) game.preyPingInterval = game.initialPreyPingInterval;
+  game.initialPreyCount = undefined;
+  game.initialPreyPingInterval = undefined;
+  game.objectives = game.objectives.map((o) => ({ ...o, completedBy: [] }));
+  for (const p of Object.values(game.players)) {
+    p.status = 'LIBRE';
+  }
+  broadcastToAll(game, { type: 'game_state', game: gameSnapshot(game), serverNow: Date.now() });
+}
+
 function schedulePurge(code: string) {
   const t = getTimers(code);
   t.purgeTimeout = setTimeout(() => {
@@ -544,8 +591,8 @@ export function handleVoice(game: Game, sessionId: string, channel: ChatChannel,
   }
 }
 
-export function recordPosition(game: Game, sessionId: string, latitude: number, longitude: number) {
-  const pos = { latitude, longitude, timestamp: Date.now() };
+export function recordPosition(game: Game, sessionId: string, latitude: number, longitude: number, accuracy?: number) {
+  const pos: Position = { latitude, longitude, timestamp: Date.now(), accuracy };
   const player = game.players[sessionId];
   if (player) {
     player.position = pos;

@@ -18,7 +18,22 @@ import {
   recordPosition,
   sendPingStatus,
   handleVoice,
+  resetGame,
 } from '../engine.js';
+import type { ZoneShrink } from '@manhunt/types';
+
+function isValidCoordinate(lat: unknown, lng: unknown): lat is number {
+  return typeof lat === 'number' && typeof lng === 'number'
+    && Number.isFinite(lat) && Number.isFinite(lng)
+    && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+}
+
+function validShrink(s: ZoneShrink | null | undefined): ZoneShrink | undefined {
+  if (!s) return undefined;
+  const ok = [s.finalRadius, s.startDelay, s.endDelay].every((n) => typeof n === 'number' && Number.isFinite(n));
+  if (!ok || s.finalRadius < 20 || s.startDelay < 0 || s.endDelay <= s.startDelay) return undefined;
+  return { finalRadius: Math.round(s.finalRadius), startDelay: Math.round(s.startDelay), endDelay: Math.round(s.endDelay) };
+}
 
 export async function wsRoutes(app: FastifyInstance) {
   app.get('/ws', { websocket: true }, (socket, req) => {
@@ -87,14 +102,34 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
 
   switch (msg.type) {
     case 'position': {
+      if (!isValidCoordinate(msg.latitude, msg.longitude)) return;
+      const accuracy = typeof msg.accuracy === 'number' && Number.isFinite(msg.accuracy) ? msg.accuracy : undefined;
+      // Lobby: remember the position so a prey that doesn't move is still known at the first ping.
       // After the game, everyone (eliminated included) shares their position to regroup.
-      if (game.status === 'TERMINEE') {
-        recordPosition(game, sessionId, msg.latitude, msg.longitude);
+      if (game.status === 'LOBBY' || game.status === 'TERMINEE') {
+        recordPosition(game, sessionId, msg.latitude, msg.longitude, accuracy);
         return;
       }
-      if (game.status !== 'EN_COURS') return;
       if (player.status !== 'LIBRE') return;
-      recordPosition(game, sessionId, msg.latitude, msg.longitude);
+      recordPosition(game, sessionId, msg.latitude, msg.longitude, accuracy);
+      break;
+    }
+
+    case 'restart_game': {
+      if (sessionId !== game.hostSessionId) {
+        sendToPlayer(sessionId, { type: 'error', message: 'Only the host can restart' });
+        return;
+      }
+      if (game.status !== 'TERMINEE') return;
+      resetGame(game);
+      break;
+    }
+
+    case 'leave_game': {
+      if (sessionId === game.hostSessionId || game.status === 'EN_COURS') return;
+      delete game.players[sessionId];
+      removeWs(sessionId);
+      broadcastToAll(game, { type: 'player_removed', sessionId });
       break;
     }
 
@@ -176,12 +211,16 @@ function handleMessage(game: ReturnType<typeof games.get> & object, sessionId: s
       if (msg.zone) {
         game.zone = msg.zone;
       }
+      if ('zoneShrink' in msg) {
+        game.zoneShrink = validShrink(msg.zoneShrink);
+      }
       broadcastToAll(game, {
         type: 'config_updated',
         maxDuration: game.maxDuration,
         gracePeriod: game.gracePeriod,
         preyPingInterval: game.preyPingInterval,
         zone: game.zone,
+        zoneShrink: game.zoneShrink,
       });
       break;
     }

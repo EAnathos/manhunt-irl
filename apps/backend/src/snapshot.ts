@@ -20,6 +20,7 @@ export function gameSnapshot(game: Game): GameSnapshot {
     gracePeriod: game.gracePeriod,
     preyPingInterval: game.preyPingInterval,
     zone: game.zone,
+    zoneShrink: game.zoneShrink,
     eliminations: game.eliminations,
     objectives: game.objectives,
     meetingPoint: game.meetingPoint,

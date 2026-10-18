@@ -176,7 +176,7 @@
         {#if mode === 'join'}
           <label class="field">
             <span>Code de la partie</span>
-            <input class="code-input" bind:value={joinCode} placeholder="ABC123" maxlength="6" autocomplete="off"
+            <input class="code-input" bind:value={joinCode} placeholder="AB12" maxlength="4" autocomplete="off"
               autocapitalize="characters" spellcheck="false" />
           </label>
         {/if}
