@@ -466,6 +466,74 @@ h2 {
   color: var(--accent);
 }
 
+/* ── Lobby: shrinking zone ── */
+
+.shrink-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.shrink-toggle input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--warning);
+  flex-shrink: 0;
+}
+.shrink-config {
+  margin-top: 0.75rem;
+  padding: 0.85rem;
+  border-radius: var(--radius);
+  background: var(--bg);
+  border: 1px solid rgba(255, 170, 0, 0.3);
+}
+.shrink-delays {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+.shrink-delays label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.shrink-delays span {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+.shrink-delays input {
+  font-size: 16px;
+  padding: 0.5rem 0.65rem;
+}
+.shrink-summary {
+  margin-top: 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ── In-game zone pill ── */
+
+.zone-pill {
+  background: rgba(26, 26, 26, 0.85);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.zone-pill.zone-shrinking {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
 /* ── Lobby: kick button ── */
 
 .btn-kick {

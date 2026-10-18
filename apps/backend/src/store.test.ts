@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { generateCode, generateSessionId, games } from './store.js';
 
 describe('generateCode', () => {
-  it('returns a 6-char uppercase alphanumeric string', () => {
+  it('returns a 4-char uppercase alphanumeric string', () => {
     const code = generateCode();
-    expect(code).toHaveLength(6);
+    expect(code).toHaveLength(4);
     expect(code).toMatch(/^[A-Z2-9]+$/);
   });
 

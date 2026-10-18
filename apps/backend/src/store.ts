@@ -3,7 +3,7 @@ import type { Game } from '@manhunt/types';
 export const games = new Map<string, Game>();
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const CODE_LENGTH = 6;
+const CODE_LENGTH = 4;
 
 export function generateCode(): string {
   let code: string;

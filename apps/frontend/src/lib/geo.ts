@@ -1,7 +1,20 @@
+import type { ZoneShrink } from '@manhunt/types';
+
 export type GeoError = 'denied' | 'unavailable' | 'unsupported';
 
+export interface GeoFix {
+  latitude: number;
+  longitude: number;
+  /** Accuracy radius in meters */
+  accuracy: number;
+}
+
+/** A coarse (cell / Wi-Fi) fix must not replace a precise GPS fix younger than this. */
+const KEEP_PRECISE_FIX_MS = 20_000;
+const COARSE_ACCURACY_M = 100;
+
 interface GeoCallbacks {
-  onPosition: (pos: { latitude: number; longitude: number }) => void;
+  onPosition: (pos: GeoFix) => void;
   onError: (err: GeoError | null) => void;
 }
 
@@ -22,11 +35,20 @@ export function startGeoWatch({ onPosition, onError }: GeoCallbacks) {
   let restartTimer: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
   let hasFix = false;
+  let last: { accuracy: number; timestamp: number } | null = null;
 
   const success = (pos: GeolocationPosition) => {
+    const { accuracy } = pos.coords;
+    if (last) {
+      // Out-of-order (cached) fix, or a coarse fallback fix replacing a recent precise one.
+      if (pos.timestamp < last.timestamp) return;
+      const preciseRecent = last.accuracy <= COARSE_ACCURACY_M && pos.timestamp - last.timestamp < KEEP_PRECISE_FIX_MS;
+      if (preciseRecent && accuracy > COARSE_ACCURACY_M) return;
+    }
+    last = { accuracy, timestamp: pos.timestamp };
     hasFix = true;
     onError(null);
-    onPosition({ latitude: pos.coords.latitude, longitude: pos.coords.longitude });
+    onPosition({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy });
   };
 
   const failure = (err: GeolocationPositionError) => {
@@ -90,6 +112,23 @@ export function startGeoWatch({ onPosition, onError }: GeoCallbacks) {
       startWatch();
     },
   };
+}
+
+/** Mirror of apps/backend/src/geo.ts currentZoneRadius — keep both in sync. */
+export function currentZoneRadius(
+  radius: number,
+  shrink: ZoneShrink | undefined,
+  startedAt: number | undefined,
+  maxDurationS: number,
+  now: number,
+): number {
+  if (!shrink || startedAt == null) return radius;
+  const finalRadius = Math.min(shrink.finalRadius, radius);
+  const start = startedAt + shrink.startDelay * 1000;
+  const end = startedAt + Math.min(shrink.endDelay, maxDurationS) * 1000;
+  if (now <= start || end <= start) return radius;
+  const progress = Math.min(1, (now - start) / (end - start));
+  return radius - (radius - finalRadius) * progress;
 }
 
 export function distanceMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }): number {
